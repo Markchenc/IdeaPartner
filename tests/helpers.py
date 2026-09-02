@@ -8,7 +8,7 @@ from typing import Any
 SCRIPTS = (
     Path(__file__).resolve().parents[1]
     / "skills"
-    / "research-idea-review"
+    / "ideapartner"
     / "scripts"
 )
 if str(SCRIPTS) not in sys.path:

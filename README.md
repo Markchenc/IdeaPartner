@@ -16,7 +16,7 @@ The runtime has no third-party Python package dependency. If live verification c
 For case testing, install the standalone skill from the versioned GitHub path:
 
 ~~~text
-$skill-installer install https://github.com/Markchenc/IdeaPartner/tree/v1.1.0/skills/research-idea-review
+$skill-installer install https://github.com/Markchenc/IdeaPartner/tree/v1.1.1/skills/ideapartner
 ~~~
 
 Private repository installation requires GitHub credentials already available to Git or the installer. The skill becomes available on the next turn; restart Codex if it does not appear.
@@ -24,18 +24,18 @@ Private repository installation requires GitHub credentials already available to
 Invoke it explicitly with a single research idea:
 
 ~~~text
-$research-idea-review Review this research idea: <your idea>
+$ideapartner Review this research idea: <your idea>
 ~~~
 
 Implicit invocation is also enabled for requests that clearly ask to position, evaluate, stress-test, or decide whether to pursue one research idea.
 
-The repository root also contains `.codex-plugin/plugin.json`, so the same skill is packaged as the `ideapartner` plugin for marketplace or workspace distribution. The plugin and deterministic runtime share version `1.1.0`.
+The repository root also contains `.codex-plugin/plugin.json`, so the same skill is packaged as the `ideapartner` plugin for marketplace or workspace distribution. The plugin and deterministic runtime share version `1.1.1`.
 
-To update a standalone installation, remove the installed `research-idea-review` directory and install a newer release tag. To uninstall it, remove that directory from the user skill location and restart Codex.
+The canonical standalone skill name is `ideapartner`. If you installed the temporary `v1.1.0` package, remove its legacy `research-idea-review` directory before installing `v1.1.1`. To update or uninstall later, remove the installed `ideapartner` directory and restart Codex.
 
 ## Current implementation
 
-V1.1 provides a single-review Codex skill at [skills/research-idea-review](skills/research-idea-review/SKILL.md). It combines researcher-facing interaction with a deterministic Python artifact pipeline:
+V1.1 provides a single-review Codex skill at [skills/ideapartner](skills/ideapartner/SKILL.md). It combines researcher-facing interaction with a deterministic Python artifact pipeline:
 
 1. structure the idea's field, scenario, research object, difficulty, contribution type, and maturity;
 2. stop for researcher confirmation;
@@ -67,7 +67,7 @@ It does not validate prose style, arbitrary headings, answer length, or numeric 
 
 ~~~text
 skills/
-  research-idea-review/
+  ideapartner/
     SKILL.md
     agents/openai.yaml
     references/
@@ -85,21 +85,21 @@ docs/
 The following commands are for runtime development and diagnostics from the repository root:
 
 ~~~bash
-python skills/research-idea-review/scripts/idea_review.py init /path/to/idea.md --run-id my-review
-python skills/research-idea-review/scripts/idea_review.py status .idea-review/runs/my-review
-python skills/research-idea-review/scripts/idea_review.py emit-task .idea-review/runs/my-review m1-positioning
+python skills/ideapartner/scripts/idea_review.py init /path/to/idea.md --run-id my-review
+python skills/ideapartner/scripts/idea_review.py status .idea-review/runs/my-review
+python skills/ideapartner/scripts/idea_review.py emit-task .idea-review/runs/my-review m1-positioning
 ~~~
 
 Give the generated task packet to a fresh Codex worker and have it write the submission path specified in the packet. Then ingest it:
 
 ~~~bash
-python skills/research-idea-review/scripts/idea_review.py ingest .idea-review/runs/my-review m1-positioning /path/to/submission.json
+python skills/ideapartner/scripts/idea_review.py ingest .idea-review/runs/my-review m1-positioning /path/to/submission.json
 ~~~
 
 The pipeline now reports WAITING_FOR_POSITIONING_CONFIRMATION. Display M1 and wait for the researcher. Only after explicit confirmation:
 
 ~~~bash
-python skills/research-idea-review/scripts/idea_review.py confirm .idea-review/runs/my-review --checkpoint positioning --note "Confirmed by researcher"
+python skills/ideapartner/scripts/idea_review.py confirm .idea-review/runs/my-review --checkpoint positioning --note "Confirmed by researcher"
 ~~~
 
 Continue with the task IDs reported by status. M3 source identity verification is live by default. A network-unresolved source remains visible as a candidate but cannot support an evidence claim or blocker.
@@ -107,10 +107,10 @@ Continue with the task IDs reported by status. M3 source identity verification i
 Run the core integrity audit at any time:
 
 ~~~bash
-python skills/research-idea-review/scripts/idea_review.py validate .idea-review/runs/my-review
+python skills/ideapartner/scripts/idea_review.py validate .idea-review/runs/my-review
 ~~~
 
-See [runtime orchestration](skills/research-idea-review/references/runtime-orchestration.md) and [artifact contracts](skills/research-idea-review/references/artifact-contracts.md) for the worker protocol.
+See [runtime orchestration](skills/ideapartner/references/runtime-orchestration.md) and [artifact contracts](skills/ideapartner/references/artifact-contracts.md) for the worker protocol.
 
 ## Development
 

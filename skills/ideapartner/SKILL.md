@@ -1,9 +1,9 @@
 ---
-name: research-idea-review
+name: ideapartner
 description: Evidence-grounded, researcher-facing review of one early or developed research idea through a checkpointed, context-isolated Codex pipeline. Use when a researcher wants to position, evaluate, stress-test, or decide whether to pursue an idea. Not for reviewing a finished manuscript, generating an unrelated idea pool, ranking many ideas, or long-term research coaching.
 ---
 
-# Research Idea Review
+# IdeaPartner
 
 Review one research idea as an evolving scientific claim, not a miniature finished paper. Determine what is assessable at its current maturity, construct a targeted field prior, and expose uncertainty instead of manufacturing completeness.
 
