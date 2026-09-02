@@ -2,6 +2,37 @@
 
 IdeaPartner is a collection of skills for the first mile of research: positioning, examining, and eventually developing research ideas before they become full proposals or papers.
 
+## Requirements
+
+- Codex or the ChatGPT desktop app with local skill support;
+- Python 3.11 or newer;
+- filesystem and subprocess access for the deterministic review runtime;
+- network access during M3 when live source identity verification is enabled.
+
+The runtime has no third-party Python package dependency. If live verification cannot resolve a source, the source remains a visible candidate but cannot support an evidence claim or blocker.
+
+## Install
+
+For case testing, install the standalone skill from the versioned GitHub path:
+
+~~~text
+$skill-installer install https://github.com/Markchenc/IdeaPartner/tree/v1.1.0/skills/research-idea-review
+~~~
+
+Private repository installation requires GitHub credentials already available to Git or the installer. The skill becomes available on the next turn; restart Codex if it does not appear.
+
+Invoke it explicitly with a single research idea:
+
+~~~text
+$research-idea-review Review this research idea: <your idea>
+~~~
+
+Implicit invocation is also enabled for requests that clearly ask to position, evaluate, stress-test, or decide whether to pursue one research idea.
+
+The repository root also contains `.codex-plugin/plugin.json`, so the same skill is packaged as the `ideapartner` plugin for marketplace or workspace distribution. The plugin and deterministic runtime share version `1.1.0`.
+
+To update a standalone installation, remove the installed `research-idea-review` directory and install a newer release tag. To uninstall it, remove that directory from the user skill location and restart Codex.
+
 ## Current implementation
 
 V1.1 provides a single-review Codex skill at [skills/research-idea-review](skills/research-idea-review/SKILL.md). It combines researcher-facing interaction with a deterministic Python artifact pipeline:
@@ -51,7 +82,7 @@ docs/
 
 ## Quick start
 
-The runtime requires Python 3 and no third-party package. From the repository root:
+The following commands are for runtime development and diagnostics from the repository root:
 
 ~~~bash
 python skills/research-idea-review/scripts/idea_review.py init /path/to/idea.md --run-id my-review

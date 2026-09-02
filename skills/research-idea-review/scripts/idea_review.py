@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from idea_review_runtime import __version__
 from idea_review_runtime.evidence import LiveSourceVerifier
 from idea_review_runtime.pipeline import PipelineError, ReviewPipeline
 
@@ -94,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Deterministic artifact runtime for the IdeaPartner research-idea-review skill."
     )
-    parser.add_argument("--version", action="version", version="IdeaPartner runtime 1.1.0")
+    parser.add_argument("--version", action="version", version=f"IdeaPartner runtime {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="Create a new review run from an idea Markdown file")
