@@ -1,0 +1,24 @@
+id: 06-emerging-harmful-language-open-environments
+title: 开放动态环境下的有害文本识别与理解
+case_kind: cross_domain
+language: zh-CN
+domain:
+  primary: 自然语言处理
+  related:
+    - 有害内容识别与平台治理
+    - 时间泛化与概念漂移
+    - 开放世界与持续学习
+    - 社会语言学与语用理解
+maturity: early
+contribution_type:
+  primary: new problem/framing
+  secondary: empirical discovery/measurement
+capabilities_under_test:
+  - dynamic open-problem decomposition
+  - early-stage technical idea review
+  - temporal evaluation and information-leakage analysis
+  - distinction between expression drift and harm-concept drift
+  - detection-versus-understanding construct validity
+runtime_input: idea.md
+checkpoint_response: researcher-confirmation.md
+manual_reference: expected-review-behavior.md

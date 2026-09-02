@@ -1,7 +1,7 @@
 # IdeaPartner Case Suite
 
 This directory contains researcher-facing diagnostic cases for evaluating the
-research-idea-review skill. The first suite is deliberately small: four
+research-idea-review skill. The first suite is deliberately small: five
 cross-domain cases plus one case derived from an active research project.
 
 The suite is designed for manual evaluation. It does not define a numeric idea
@@ -19,6 +19,7 @@ are working as intended.
 | 03 | Computer vision / vision-language evaluation | developed | dataset/benchmark | Benchmark-conditioned review and construct validity |
 | 04 | AI infrastructure / LLM serving | developed | system/AI infrastructure | End-to-end value, cost transfer, and workload validity |
 | 05 | Dialogue NLP / personality recognition | developed | method/algorithm | Full-chain review on a real research direction |
+| 06 | NLP / evolving harmful language | early | new problem/framing | Dynamic-problem decomposition and temporal evaluation validity |
 
 ## Files in each case
 
@@ -47,7 +48,7 @@ semantic failures rather than testing whether a model can repeat a rubric.
 
 ## Interpretation boundary
 
-Passing these five cases shows that the workflow exhibits several intended
+Passing these six cases shows that the workflow exhibits several intended
 review behaviors under controlled examples. It does not establish that the
 skill outperforms expert peer review. Stronger claims would require blinded
 expert comparison, repeated runs across models, and a larger independently
