@@ -1,0 +1,22 @@
+id: 01-disagreement-first-writing
+title: 分歧优先的 AI 学术写作交互
+case_kind: cross_domain
+language: zh-CN
+domain:
+  primary: 人机交互
+  related:
+    - AI 辅助写作
+    - 人机协同决策
+    - 可解释与可争议 AI
+maturity: early
+contribution_type:
+  primary: HCI/design research
+  secondary: new problem/framing
+capabilities_under_test:
+  - early-stage maturity conditioning
+  - framing legitimacy
+  - contribution-conditioned review
+  - calibrated abstention on missing method details
+runtime_input: idea.md
+checkpoint_response: researcher-confirmation.md
+manual_reference: expected-review-behavior.md

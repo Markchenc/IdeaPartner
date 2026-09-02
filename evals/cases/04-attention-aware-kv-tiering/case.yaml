@@ -1,0 +1,22 @@
+id: 04-attention-aware-kv-tiering
+title: 基于注意力持续性的分层 KV Cache 管理
+case_kind: cross_domain
+language: zh-CN
+domain:
+  primary: AI infrastructure
+  related:
+    - 大模型推理系统
+    - 异构内存管理
+    - 长上下文推理
+maturity: developed
+contribution_type:
+  primary: system/AI infrastructure
+  secondary: method/algorithm
+capabilities_under_test:
+  - system contribution conditioning
+  - local-to-end-to-end dependency review
+  - cost-transfer detection
+  - workload and hardware validity
+runtime_input: idea.md
+checkpoint_response: researcher-confirmation.md
+manual_reference: expected-review-behavior.md

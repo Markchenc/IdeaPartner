@@ -1,0 +1,22 @@
+id: 03-counterfactual-compositional-vision-benchmark
+title: 受控反事实视觉组合推理基准
+case_kind: cross_domain
+language: zh-CN
+domain:
+  primary: 计算机视觉
+  related:
+    - 视觉语言模型
+    - 多模态评测
+    - 生成式图像编辑
+maturity: developed
+contribution_type:
+  primary: dataset/benchmark
+  secondary: empirical discovery/measurement
+capabilities_under_test:
+  - dataset and benchmark contribution conditioning
+  - construct validity review
+  - data artifact and shortcut analysis
+  - evaluation-to-claim alignment
+runtime_input: idea.md
+checkpoint_response: researcher-confirmation.md
+manual_reference: expected-review-behavior.md

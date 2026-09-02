@@ -1,0 +1,22 @@
+id: 02-batch-relative-vl-policy-optimization
+title: 无价值网络的组内相对多模态策略优化
+case_kind: cross_domain
+language: zh-CN
+domain:
+  primary: 机器学习
+  related:
+    - 多模态大模型
+    - 强化学习
+    - 推理能力后训练
+maturity: middle
+contribution_type:
+  primary: method/algorithm
+  secondary: application/translation
+capabilities_under_test:
+  - closest-work collision detection
+  - terminology-robust novelty review
+  - method-versus-application contribution boundary
+  - mechanism and optimization risk analysis
+runtime_input: idea.md
+checkpoint_response: researcher-confirmation.md
+manual_reference: expected-review-behavior.md

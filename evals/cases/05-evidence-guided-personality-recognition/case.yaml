@@ -1,0 +1,23 @@
+id: 05-evidence-guided-personality-recognition
+title: 证据引导的双向迭代对话人格识别
+case_kind: project_derived_real
+language: zh-CN
+domain:
+  primary: 自然语言处理
+  related:
+    - 对话理解
+    - 计算人格识别
+    - 可解释与证据型推理
+    - 图表示学习
+maturity: developed
+contribution_type:
+  primary: method/algorithm
+  secondary: empirical discovery/measurement
+capabilities_under_test:
+  - real-case full dependency review
+  - evidence-versus-interpretability claim calibration
+  - feedback-loop mechanism analysis
+  - experimental identifiability and baseline fairness
+runtime_input: idea.md
+checkpoint_response: researcher-confirmation.md
+manual_reference: expected-review-behavior.md
