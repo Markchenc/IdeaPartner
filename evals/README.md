@@ -1,5 +1,7 @@
 # IdeaPartner Case Suite
 
+中文运行与人工评估说明见 [EVALUATION_GUIDE.zh-CN.md](EVALUATION_GUIDE.zh-CN.md)。
+
 This directory contains researcher-facing diagnostic cases for evaluating the
 research-idea-review skill. The first suite is deliberately small: five
 cross-domain cases plus one case derived from an active research project.
