@@ -1,0 +1,30 @@
+id: 06-compositional-harm-generalisation
+title: 面向未见目标—伤害机制组合的结构解耦有害文本识别
+case_kind: retrospective_positive_control
+language: zh-CN
+domain:
+  primary: 自然语言处理
+  related:
+    - 有害与仇恨言论识别
+    - 组合泛化
+    - 结构化预测
+    - 数据中心机器学习
+maturity: developed
+contribution_type:
+  primary: method/algorithm
+  secondary: dataset/benchmark
+knowledge_cutoff: 2024-12-31
+outcome_anchor:
+  title: Compositional Generalisation for Explainable Hate Speech Detection
+  venue: EMNLP 2025 Main Conference
+  url: https://aclanthology.org/2025.emnlp-main.703/
+  visibility: human_evaluator_only
+capabilities_under_test:
+  - recognition of a strong bounded research formulation
+  - method and benchmark contribution interaction
+  - compositional mechanism review
+  - synthetic-data causal and validity analysis
+  - retrospective cutoff compliance
+runtime_input: idea.md
+checkpoint_response: researcher-confirmation.md
+manual_reference: expected-review-behavior.md

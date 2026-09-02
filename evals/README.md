@@ -21,7 +21,7 @@ are working as intended.
 | 03 | Computer vision / vision-language evaluation | developed | dataset/benchmark | Benchmark-conditioned review and construct validity |
 | 04 | AI infrastructure / LLM serving | developed | system/AI infrastructure | End-to-end value, cost transfer, and workload validity |
 | 05 | Dialogue NLP / personality recognition | developed | method/algorithm | Full-chain review on a real research direction |
-| 06 | NLP / evolving harmful language | early | new problem/framing | Dynamic-problem decomposition and temporal evaluation validity |
+| 06 | NLP / harmful-language generalisation | developed | method/algorithm | Retrospective positive control for compositional generalisation |
 
 ## Files in each case
 
@@ -43,6 +43,11 @@ are working as intended.
 4. Complete M2 through M7 with live evidence verification.
 5. Only after the final report is produced, compare the run with
    `expected-review-behavior.md` and record a manual assessment.
+
+For a retrospective case, obey the `knowledge_cutoff` recorded in its metadata
+and idea input. Do not use the later outcome-anchor paper during retrieval or
+review. The anchor is visible only to the human evaluator and exists to provide
+a weak external outcome reference, not a model answer.
 
 The metadata and expected behaviors are intentionally excluded from runtime
 inputs. This prevents answer leakage and keeps the cases useful for diagnosing
