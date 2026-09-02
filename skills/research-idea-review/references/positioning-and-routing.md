@@ -83,6 +83,8 @@ Present the M1 card and ask the researcher to confirm or correct it. Explicitly 
 
 Do not phrase inferred content as if the researcher supplied it.
 
+After the M1 worker submission is ingested, the runtime enters `WAITING_FOR_POSITIONING_CONFIRMATION`. Do not record confirmation from your own interpretation of silence or an earlier message. Record it only after the researcher responds to the displayed card. If they correct M1, emit a refreshed M1 task, replace the artifact, show the new card, and wait again.
+
 ## M2: route compilation after confirmation
 
 M2 is an internal planner. It may identify an obvious mismatch, but it must not issue the final review.
@@ -106,13 +108,16 @@ Long prose is not evidence of maturity. A detailed method with an unstable probl
 
 ### Compile the route
 
-Record internally:
+Produce the structured M2 artifact with:
 
-- M3 branches and evidence layers to retrieve;
-- M4 sections likely to be assessable or missing;
-- the maturity depth for each M5 task;
-- the primary and secondary contribution lenses to integrate into M5;
-- field-specific evidence norms, baselines, and common failure modes to obtain from M3;
-- likely issues for later verification.
+- confirmed/calibrated `maturity`;
+- `alignment_questions` created by the preliminary consistency pass;
+- `m3_scope`: historical branches, adjacent collision scopes, terminology variants, field evidence norms, data/resource questions, inclusion/exclusion boundaries, and a current-date frontier cutoff;
+- `m4_assessability`: which of the six sections are assessable, provisional, or not yet required;
+- `review_lens_seed`: primary/secondary contribution, maturity depth for A–D, likely blocker scopes, and field norms M3 must recover.
+
+M2 must be usable as a search brief by three workers that do not share its reasoning context. Avoid references such as “as discussed above”; materialize the needed scope and questions in the artifact.
 
 Do not create numeric weights. The route changes questions, evidence requirements, applicability, and gate semantics.
+
+Follow the exact top-level payload contract in [artifact contracts](artifact-contracts.md).

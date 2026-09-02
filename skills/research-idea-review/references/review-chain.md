@@ -15,17 +15,21 @@ confirmed contribution type
 
 This lens must change the questions, evidence requirements, applicability, and blocker semantics inside every task. Do not run contribution types as detached reviewer plugins or append an isolated “field fit” score.
 
+Materialize the compiled lens inside every M5 artifact: maturity, primary and relevant secondary contribution, field norms recovered by M3, applicable questions, and details not yet required. Each isolated worker must derive it from the M1, M2, M3, and M4 artifacts in its own task packet; do not pass a supervisor-authored verbal shortcut.
+
 When a secondary contribution is essential to the claim, integrate it only where it changes a task. Avoid duplicating a full second review.
 
 ## Dependency graph
 
 ```text
-              ┌── M5-A problem legitimacy/value ──┐
-M1–M4 inputs ─┤                                   ├── M5-C logic/mechanism ── M5-D researchability
-              └── M5-B knowledge contribution ────┘
+M1 + M2 + M3 + M4 ─┬── M5-A problem legitimacy/value ─┐
+                    └── M5-B knowledge contribution ────┤
+                                                       └── M5-C logic/mechanism
+                                                              ↓
+                                                     M5-D researchability
 ```
 
-M5-A and M5-B may run independently. M5-C must consume both results. M5-D must consume the mechanism, assumptions, and claims retained by M5-C.
+M5-A and M5-B may run independently. M5-C must consume both results plus the same M1–M4 basis. M5-D must consume A/B/C plus the same M1–M4 basis. This deliberate repetition prevents context isolation from erasing positioning or field-prior constraints.
 
 ## Common result contract
 
@@ -40,6 +44,8 @@ Each task reports:
 - status;
 - whether it blocks the current formulation or execution plan;
 - a concrete revision or verification action.
+
+For each evidence-supported judgment, include canonical M3 `evidence_claim_ids`. Do not attach a source directly in M5: the source-to-claim relation must already have been inspected and grounded in M3 synthesis. Researcher-stated, inferred, and missing judgments use no evidence claim IDs.
 
 Use `assessable`, `provisional`, `not_yet_assessable`, or `not_applicable` for applicability. Unknown is not a low score.
 
@@ -163,7 +169,7 @@ Never average conflicting judgments. Diagnose:
 - maturity conflict: use `not_yet_assessable`;
 - retrieval conflict: keep novelty uncertain.
 
-A blocker requires high-quality direct evidence that affects a core claim. A/B/C block continuing with the current formulation or contribution claim. D usually blocks executing the current plan. Explain whether reframing, narrowing, or redesigned validation can remove it.
+A blocker requires high-quality direct evidence that affects a core claim. Record at least one canonical M3 claim in `direct_evidence_claim_ids`; otherwise express the issue as an unresolved risk rather than a blocker. A/B/C block continuing with the current formulation or contribution claim. D usually blocks executing the current plan. Explain whether reframing, narrowing, or redesigned validation can remove it.
 
 ## M6: lightweight challenge
 
@@ -174,3 +180,5 @@ Select at most three checks based on the most consequential M5 claims:
 3. **Weakest assumption / minimal falsification:** which assumption is most fragile, and what cheap evidence could overturn it?
 
 M6 does not produce a standalone report. Feed its result back into the affected M5 judgment by strengthening, weakening, or adding a blocker.
+
+The isolated M6 worker receives M1, M2, M3 synthesis, M4, and all four M5 artifacts. It records the exact target and any canonical evidence claim IDs used in each update. Follow [artifact contracts](artifact-contracts.md).
