@@ -1,6 +1,6 @@
 # Researcher-Facing Synthesis (M7)
 
-The final response contains three visible parts: M4, M5, and M7. Follow the researcher's language. Prefer an auditable explanation over exhaustive prose.
+The final response contains three visible parts: M4, M5, and M7. Follow the researcher's language. Prefer an auditable explanation over exhaustive prose. The isolated M7 worker must read the original input, M1, M2, M3 synthesis, M4, M5-A/B/C/D, and M6 from its task packet; final synthesis is not allowed to rely on a supervisor's memory of those artifacts.
 
 ## Part I: M4 structured idea
 
@@ -31,6 +31,8 @@ For each task include:
 
 Integrate citations where they support a specific claim. Do not include a separate literature dump.
 
+Use only canonical M3 evidence claim IDs retained by M4–M6. List every claim ID used by a literature-dependent statement in the M7 `citation_claim_ids` closure list, then render its verified source citation near that statement. If the desired statement has no canonical claim, narrow it or return to M3; do not attach a plausible paper ad hoc.
+
 ## Part III: M7 synthesis
 
 Synthesize rather than average. Include:
@@ -57,3 +59,5 @@ Use a calibrated conclusion such as:
 - no reliable judgment is possible yet.
 
 Do not output a 0–100 score, weighted total, conference-style accept/reject, or certainty unsupported by the evidence record.
+
+Return `report_markdown`, `conclusion`, and `citation_claim_ids` according to [artifact contracts](artifact-contracts.md). After ingestion, present the runtime-generated `07-final-report.md` only if `validate` reports no core integrity error.

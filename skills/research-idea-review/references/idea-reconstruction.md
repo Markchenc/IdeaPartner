@@ -1,6 +1,6 @@
 # Structured Idea Reconstruction (M4)
 
-M4 converts the confirmed idea and M3 evidence into one inspectable review object. It organizes; it does not improve the idea invisibly.
+M4 converts the confirmed idea and canonical M3 evidence into one inspectable review object. It organizes; it does not improve the idea invisibly. The isolated M4 worker must read the original input, confirmed M1 positioning, M2 route, and M3 synthesis from its task packet; none is optional or implied by prior conversation.
 
 ## Provenance states
 
@@ -12,6 +12,18 @@ Mark important content inline when its origin affects interpretation:
 - **Missing/uncertain**: not available or not safely inferable.
 
 Never present inferred method details, data, hypotheses, or expected results as part of the researcher's original idea.
+
+Represent every item as:
+
+```json
+{
+  "text": "One inspectable statement",
+  "provenance": "researcher_stated | evidence_supported | inferred | missing",
+  "evidence_claim_ids": []
+}
+```
+
+Only `evidence_supported` content may cite canonical M3 evidence claim IDs. A real paper ID by itself is insufficient because it does not establish the paper–claim relation. Researcher-stated, inferred, and missing items must keep `evidence_claim_ids` empty.
 
 ## Six-section structure
 
@@ -67,3 +79,5 @@ For non-experimental contributions, interpret this as the appropriate evidence o
 ## Researcher-facing output
 
 Use concise prose or tables. Explicitly call out material ambiguities and missing sections, but do not treat every missing item as a defect. M5 determines whether a missing item is required at the confirmed maturity.
+
+Use the six exact payload keys in [artifact contracts](artifact-contracts.md) so the runtime can preserve provenance without validating writing style.
