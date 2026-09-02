@@ -77,8 +77,8 @@ def validate_consumed_inputs(
     normalized = []
     for artifact_id, expected_item in expected_by_id.items():
         actual = actual_by_id[artifact_id]
-        if actual.get("sha256") != expected_item["sha256"]:
-            raise SubmissionError(f"Digest mismatch for consumed input {artifact_id}")
+        if actual.get("artifact_version") != expected_item["artifact_version"]:
+            raise SubmissionError(f"Version mismatch for consumed input {artifact_id}")
         used_for = actual.get("used_for")
         if not isinstance(used_for, str) or not used_for.strip():
             raise SubmissionError(f"consumed input {artifact_id} must explain how it was used")
@@ -88,7 +88,7 @@ def validate_consumed_inputs(
             {
                 "artifact_id": artifact_id,
                 "path": expected_item["relative_path"],
-                "sha256": expected_item["sha256"],
+                "artifact_version": expected_item["artifact_version"],
                 "used_for": used_for.strip(),
             }
         )

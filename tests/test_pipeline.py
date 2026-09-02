@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import multiprocessing
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,6 +21,23 @@ from idea_review_runtime.pipeline import (
     MissingDependency,
     ReviewPipeline,
 )
+
+
+def _concurrent_ingest(
+    run_dir: str,
+    task_id: str,
+    submission_value: dict,
+    start_event,
+    result_queue,
+) -> None:
+    try:
+        start_event.wait(timeout=10)
+        ReviewPipeline(Path(run_dir), source_verifier=FakeSourceVerifier()).ingest(
+            task_id, submission_value
+        )
+        result_queue.put(None)
+    except Exception as error:  # pragma: no cover - returned to the parent process
+        result_queue.put(f"{type(error).__name__}: {error}")
 
 
 class PipelineDependencyTests(unittest.TestCase):
@@ -56,6 +74,12 @@ class PipelineDependencyTests(unittest.TestCase):
         packet = self.pipeline.emit_task("m2-route")
         self.assertEqual("m2-route", packet["task_id"])
 
+    def test_task_dependencies_use_registered_versions_not_content_hashes(self) -> None:
+        packet = self.pipeline.emit_task("m1-positioning")
+        self.assertNotIn("sha256", packet["inputs"][0])
+        self.assertEqual(1, packet["inputs"][0]["artifact_version"])
+        self.assertNotIn("sha256", packet["submission_template"]["consumed_inputs"][0])
+
     def test_m4_requires_explicit_m1_m2_and_synthesized_m3(self) -> None:
         self.ingest("m1-positioning", positioning_payload())
         self.pipeline.confirm_positioning("confirmed")
@@ -84,10 +108,54 @@ class PipelineDependencyTests(unittest.TestCase):
         changed_route["alignment_questions"].append("Is the method compatible with privacy constraints?")
         self.ingest("m2-route", changed_route, replace=True)
 
+        self.assertEqual(2, self.pipeline.manifest["artifacts"]["m2-route"]["version"])
         self.assertFalse(self.pipeline.artifact_is_fresh("m3-synthesis"))
         self.assertFalse(self.pipeline.artifact_is_fresh("m4-reconstruction"))
         with self.assertRaises(MissingDependency):
             self.pipeline.emit_task("m5-a")
+
+    def test_concurrent_ingest_preserves_both_manifest_updates(self) -> None:
+        self.ingest("m1-positioning", positioning_payload())
+        self.pipeline.confirm_positioning("confirmed")
+        self.ingest("m2-route", route_payload())
+        tasks = ("m3-foundation", "m3-data")
+        submissions = {
+            task_id: submission(
+                self.pipeline.emit_task(task_id),
+                prior_phase_payload(),
+            )
+            for task_id in tasks
+        }
+
+        context = multiprocessing.get_context("spawn")
+        start_event = context.Event()
+        result_queue = context.Queue()
+        processes = [
+            context.Process(
+                target=_concurrent_ingest,
+                args=(
+                    str(self.pipeline.run_dir),
+                    task_id,
+                    submissions[task_id],
+                    start_event,
+                    result_queue,
+                ),
+            )
+            for task_id in tasks
+        ]
+        for process in processes:
+            process.start()
+        start_event.set()
+        results = [result_queue.get(timeout=20) for _ in processes]
+        for process in processes:
+            process.join(timeout=20)
+
+        self.assertTrue(all(result is None for result in results), results)
+        self.assertTrue(all(not process.is_alive() for process in processes))
+        self.assertTrue(all(process.exitcode == 0 for process in processes))
+        status = self.pipeline.status()
+        self.assertIn("m3-foundation", status["artifacts"])
+        self.assertIn("m3-data", status["artifacts"])
 
     def test_evidence_triggered_repositioning_creates_a_second_checkpoint(self) -> None:
         self.ingest("m1-positioning", positioning_payload())

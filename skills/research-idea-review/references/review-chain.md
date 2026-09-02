@@ -33,6 +33,8 @@ M5-A and M5-B may run independently. M5-C must consume both results plus the sam
 
 ## Common result contract
 
+The M5 contract described in [artifact contracts](artifact-contracts.md) is currently an inter-worker handoff schema: it stabilizes context, provenance, evidence references, and blocker transport. It is not the final formulation of M5's metacognitive decomposition. This PR preserves that schema; contribution-conditioned question compilation, sufficiency rules, conflict representation, and judgment semantics are deferred to a dedicated M5 iteration.
+
 Each task reports:
 
 - judgment and applicability;

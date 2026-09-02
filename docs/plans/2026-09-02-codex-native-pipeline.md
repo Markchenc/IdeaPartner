@@ -4,7 +4,7 @@
 
 **Goal:** Turn the research-idea review skill into a resumable Codex-native pipeline that isolates cognitive tasks while preserving M1–M3 dependencies and enforcing only checkpoint, evidence, and provenance integrity.
 
-**Architecture:** A standard-library Python runtime stores one artifact graph per review run and emits self-contained task packets for isolated Codex workers. Every downstream artifact records the exact upstream digests it consumed; the runtime blocks missing, stale, or unacknowledged dependencies and keeps verified sources separate from unsupported assertions. The skill remains the supervisor and user-facing interaction layer.
+**Architecture:** A standard-library Python runtime stores one artifact graph per review run and emits self-contained task packets for isolated Codex workers. Every downstream artifact records the exact upstream artifact versions it consumed; the runtime blocks missing, stale, or unacknowledged dependencies and keeps verified sources separate from unsupported assertions. The skill remains the supervisor and user-facing interaction layer.
 
 **Tech Stack:** Python 3 standard library, JSON/JSONL artifacts, Markdown skill references, `unittest`, Git.
 
@@ -48,7 +48,7 @@
 **Steps:**
 1. Define the task graph and complete dependency lists.
 2. Implement run initialization and atomic manifest/artifact writes.
-3. Emit task packets with exact paths, digests, purposes, and output contracts.
+3. Emit task packets with exact paths, artifact versions, purposes, and output contracts.
 4. Require worker submissions to acknowledge how every dependency was used.
 5. Enforce the positioning checkpoint and dependency freshness during emission and ingestion.
 6. Add CLI commands for `init`, `status`, `emit-task`, `confirm`, `ingest`, and `validate`.

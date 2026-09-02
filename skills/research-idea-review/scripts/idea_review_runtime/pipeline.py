@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import copy
 import re
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
-from .artifacts import atomic_write_json, atomic_write_text, read_json, sha256_file, utc_now
+from .artifacts import atomic_write_json, atomic_write_text, read_json, utc_now
 from .evidence import (
     LiveSourceVerifier,
     SourceVerifier,
     merge_source_ledgers,
     normalize_and_verify_sources,
 )
+from .locking import InterProcessFileLock
 from .tasks import (
     ARTIFACT_PURPOSES,
     INPUT_ARTIFACT_ID,
@@ -51,6 +53,7 @@ class ReviewPipeline:
     def __init__(self, run_dir: Path, *, source_verifier: SourceVerifier | None = None) -> None:
         self.run_dir = Path(run_dir).resolve()
         self.manifest_path = self.run_dir / MANIFEST_NAME
+        self.lock_path = self.run_dir / ".manifest.lock"
         if not self.manifest_path.is_file():
             raise RunNotFound(f"No IdeaPartner run manifest exists at {self.manifest_path}")
         self.source_verifier = source_verifier or LiveSourceVerifier()
@@ -88,7 +91,7 @@ class ReviewPipeline:
                 INPUT_ARTIFACT_ID: {
                     "artifact_id": INPUT_ARTIFACT_ID,
                     "path": "input.md",
-                    "sha256": sha256_file(input_path),
+                    "version": 1,
                     "produced_by": "researcher",
                     "created_at": created_at,
                 }
@@ -96,13 +99,13 @@ class ReviewPipeline:
             "checkpoints": {
                 "positioning": {
                     "status": "pending",
-                    "artifact_sha256": None,
+                    "artifact_version": None,
                     "note": "",
                     "decided_at": None,
                 },
                 "post-m3": {
                     "status": "not_required",
-                    "artifact_sha256": None,
+                    "artifact_version": None,
                     "note": "",
                     "decided_at": None,
                 },
@@ -115,7 +118,14 @@ class ReviewPipeline:
 
     @property
     def manifest(self) -> dict[str, Any]:
-        return copy.deepcopy(self._manifest)
+        with self._transaction():
+            return copy.deepcopy(self._manifest)
+
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        with InterProcessFileLock(self.lock_path):
+            self._manifest = read_json(self.manifest_path)
+            yield
 
     def _save_manifest(self) -> None:
         self._manifest["updated_at"] = utc_now()
@@ -148,7 +158,7 @@ class ReviewPipeline:
             memo[artifact_id] = False
             return False
         path = self.run_dir / record["path"]
-        if not path.is_file() or sha256_file(path) != record.get("sha256"):
+        if not path.is_file():
             memo[artifact_id] = False
             return False
         if artifact_id == INPUT_ARTIFACT_ID:
@@ -163,6 +173,12 @@ class ReviewPipeline:
         except (OSError, ValueError):
             memo[artifact_id] = False
             return False
+        if (
+            envelope.get("artifact_id") != artifact_id
+            or envelope.get("artifact_version") != record.get("version")
+        ):
+            memo[artifact_id] = False
+            return False
         inputs = envelope.get("inputs")
         if not isinstance(inputs, list):
             memo[artifact_id] = False
@@ -173,7 +189,7 @@ class ReviewPipeline:
                 return False
             dependency_id = dependency.get("artifact_id")
             current = self._artifact_record(str(dependency_id))
-            if not current or dependency.get("sha256") != current.get("sha256"):
+            if not current or dependency.get("artifact_version") != current.get("version"):
                 memo[artifact_id] = False
                 return False
             if not self._artifact_is_fresh(str(dependency_id), memo, visiting.copy()):
@@ -189,35 +205,43 @@ class ReviewPipeline:
             record
             and self.artifact_is_fresh("m1-positioning")
             and checkpoint.get("status") == "confirmed"
-            and checkpoint.get("artifact_sha256") == record.get("sha256")
+            and checkpoint.get("artifact_version") == record.get("version")
         )
 
     def _post_m3_confirmed(self) -> bool:
         checkpoint = self._manifest["checkpoints"]["post-m3"]
         if checkpoint.get("status") == "not_required":
             record = self._artifact_record("m3-synthesis")
-            return bool(record and checkpoint.get("artifact_sha256") == record.get("sha256"))
+            return bool(record and checkpoint.get("artifact_version") == record.get("version"))
         record = self._artifact_record("m3-synthesis")
         return bool(
             record
             and self.artifact_is_fresh("m3-synthesis")
             and checkpoint.get("status") == "confirmed"
-            and checkpoint.get("artifact_sha256") == record.get("sha256")
+            and checkpoint.get("artifact_version") == record.get("version")
         )
 
     def confirm_positioning(self, note: str) -> None:
+        with self._transaction():
+            self._confirm_positioning_unlocked(note)
+
+    def _confirm_positioning_unlocked(self, note: str) -> None:
         if not self.artifact_is_fresh("m1-positioning"):
             raise MissingDependency("A fresh M1 positioning artifact is required before confirmation")
         record = self._artifact_record("m1-positioning")
         self._manifest["checkpoints"]["positioning"] = {
             "status": "confirmed",
-            "artifact_sha256": record["sha256"],
+            "artifact_version": record["version"],
             "note": note.strip(),
             "decided_at": utc_now(),
         }
         self._save_manifest()
 
     def confirm_post_m3(self, note: str) -> None:
+        with self._transaction():
+            self._confirm_post_m3_unlocked(note)
+
+    def _confirm_post_m3_unlocked(self, note: str) -> None:
         if not self.artifact_is_fresh("m3-synthesis"):
             raise MissingDependency("A fresh M3 synthesis artifact is required before re-positioning confirmation")
         checkpoint = self._manifest["checkpoints"]["post-m3"]
@@ -226,7 +250,7 @@ class ReviewPipeline:
         record = self._artifact_record("m3-synthesis")
         self._manifest["checkpoints"]["post-m3"] = {
             "status": "confirmed",
-            "artifact_sha256": record["sha256"],
+            "artifact_version": record["version"],
             "note": note.strip(),
             "decided_at": utc_now(),
         }
@@ -258,7 +282,7 @@ class ReviewPipeline:
                     "artifact_id": artifact_id,
                     "relative_path": record["path"],
                     "path": str(path),
-                    "sha256": record["sha256"],
+                    "artifact_version": record["version"],
                     "purpose": ARTIFACT_PURPOSES[artifact_id],
                 }
             )
@@ -269,6 +293,10 @@ class ReviewPipeline:
         return inputs
 
     def emit_task(self, task_id: str, *, refresh: bool = False) -> dict[str, Any]:
+        with self._transaction():
+            return self._emit_task_unlocked(task_id, refresh=refresh)
+
+    def _emit_task_unlocked(self, task_id: str, *, refresh: bool = False) -> dict[str, Any]:
         if task_id not in TASKS:
             raise PipelineError(f"Unknown task_id {task_id}")
         spec = TASKS[task_id]
@@ -313,7 +341,7 @@ class ReviewPipeline:
                 "consumed_inputs": [
                     {
                         "artifact_id": item["artifact_id"],
-                        "sha256": item["sha256"],
+                        "artifact_version": item["artifact_version"],
                         "used_for": "REPLACE_WITH_A_SHORT_DESCRIPTION_OF_HOW_THIS_INPUT_SHAPED_THE_RESULT",
                     }
                     for item in inputs
@@ -325,7 +353,6 @@ class ReviewPipeline:
         atomic_write_json(packet_path, packet)
         self._manifest["task_packets"][task_id] = {
             "path": str(packet_path.relative_to(self.run_dir)).replace("\\", "/"),
-            "sha256": sha256_file(packet_path),
             "emitted_at": utc_now(),
         }
         self._save_manifest()
@@ -336,9 +363,12 @@ class ReviewPipeline:
         if not isinstance(packet_record, dict):
             raise SubmissionError(f"No task packet has been emitted for {task_id}")
         packet_path = self.run_dir / packet_record["path"]
-        if not packet_path.is_file() or sha256_file(packet_path) != packet_record.get("sha256"):
-            raise SubmissionError(f"The task packet for {task_id} is missing or was modified")
-        return read_json(packet_path)
+        if not packet_path.is_file():
+            raise SubmissionError(f"The task packet for {task_id} is missing")
+        packet = read_json(packet_path)
+        if packet.get("task_id") != task_id or packet.get("run_id") != self._manifest["run_id"]:
+            raise SubmissionError(f"The task packet for {task_id} does not belong to this run")
+        return packet
 
     def _artifact_payload(self, artifact_id: str) -> dict[str, Any]:
         path = self._artifact_path(artifact_id)
@@ -413,6 +443,16 @@ class ReviewPipeline:
         *,
         replace: bool = False,
     ) -> Path:
+        with self._transaction():
+            return self._ingest_unlocked(task_id, submission, replace=replace)
+
+    def _ingest_unlocked(
+        self,
+        task_id: str,
+        submission: dict[str, Any] | Path,
+        *,
+        replace: bool = False,
+    ) -> Path:
         if task_id not in TASKS:
             raise PipelineError(f"Unknown task_id {task_id}")
         spec = TASKS[task_id]
@@ -423,9 +463,11 @@ class ReviewPipeline:
         self._ensure_checkpoint(spec)
         packet = self._load_task_packet(task_id)
         packet_inputs = packet.get("inputs")
-        expected_signature = [(item["artifact_id"], item["sha256"]) for item in expected_inputs]
+        expected_signature = [
+            (item["artifact_id"], item["artifact_version"]) for item in expected_inputs
+        ]
         packet_signature = [
-            (item.get("artifact_id"), item.get("sha256"))
+            (item.get("artifact_id"), item.get("artifact_version"))
             for item in packet_inputs
             if isinstance(item, dict)
         ] if isinstance(packet_inputs, list) else []
@@ -444,11 +486,13 @@ class ReviewPipeline:
         consumed_inputs = validate_consumed_inputs(submission_value.get("consumed_inputs"), expected_inputs)
         payload = self._prepare_payload(task_id, submission_value.get("payload"))
 
+        artifact_version = int(current_record.get("version", 0)) + 1 if current_record else 1
         artifact_path = self.run_dir / spec.artifact_path
         envelope = {
             "schema_version": 1,
             "run_id": self._manifest["run_id"],
             "artifact_id": spec.artifact_id,
+            "artifact_version": artifact_version,
             "task_id": task_id,
             "created_at": utc_now(),
             "summary": summary.strip(),
@@ -460,7 +504,7 @@ class ReviewPipeline:
         artifact_record = {
             "artifact_id": spec.artifact_id,
             "path": str(artifact_path.relative_to(self.run_dir)).replace("\\", "/"),
-            "sha256": sha256_file(artifact_path),
+            "version": artifact_version,
             "produced_by": task_id,
             "created_at": envelope["created_at"],
             "summary": envelope["summary"],
@@ -471,7 +515,7 @@ class ReviewPipeline:
         if task_id == "m1-positioning":
             self._manifest["checkpoints"]["positioning"] = {
                 "status": "pending",
-                "artifact_sha256": artifact_record["sha256"],
+                "artifact_version": artifact_record["version"],
                 "note": "",
                 "decided_at": None,
             }
@@ -479,7 +523,7 @@ class ReviewPipeline:
             needs_confirmation = payload["repositioning"]["required"]
             self._manifest["checkpoints"]["post-m3"] = {
                 "status": "pending" if needs_confirmation else "not_required",
-                "artifact_sha256": artifact_record["sha256"],
+                "artifact_version": artifact_record["version"],
                 "note": "",
                 "decided_at": None,
             }
@@ -488,8 +532,7 @@ class ReviewPipeline:
             atomic_write_text(report_path, payload["report_markdown"].rstrip() + "\n")
             self._manifest.setdefault("exports", {})["final_report"] = {
                 "path": "07-final-report.md",
-                "sha256": sha256_file(report_path),
-                "source_artifact_sha256": artifact_record["sha256"],
+                "source_artifact_version": artifact_record["version"],
                 "created_at": utc_now(),
             }
 
@@ -535,6 +578,10 @@ class ReviewPipeline:
         return True
 
     def status(self) -> dict[str, Any]:
+        with self._transaction():
+            return self._status_unlocked()
+
+    def _status_unlocked(self) -> dict[str, Any]:
         artifacts: dict[str, dict[str, Any]] = {}
         for artifact_id, record in self._manifest.get("artifacts", {}).items():
             artifacts[artifact_id] = {
@@ -553,11 +600,15 @@ class ReviewPipeline:
         }
 
     def validate_run(self) -> dict[str, Any]:
+        with self._transaction():
+            return self._validate_run_unlocked()
+
+    def _validate_run_unlocked(self) -> dict[str, Any]:
         errors: list[str] = []
         warnings: list[str] = []
         for artifact_id in self._manifest.get("artifacts", {}):
             if not self.artifact_is_fresh(artifact_id):
-                errors.append(f"Artifact {artifact_id} is stale, missing, or externally modified")
+                errors.append(f"Artifact {artifact_id} is stale, missing, or has invalid identity metadata")
         ledger = self.source_ledger()
         for source_id, source in ledger.items():
             if source.get("verification", {}).get("status") != "verified":
@@ -571,9 +622,9 @@ class ReviewPipeline:
                 errors.append("The final report export is missing")
             else:
                 export_path = self.run_dir / export.get("path", "")
-                if not export_path.is_file() or sha256_file(export_path) != export.get("sha256"):
-                    errors.append("The final report export is missing or externally modified")
-                if export.get("source_artifact_sha256") != m7_record.get("sha256"):
+                if not export_path.is_file():
+                    errors.append("The final report export is missing")
+                if export.get("source_artifact_version") != m7_record.get("version"):
                     errors.append("The final report export was not generated from the current M7 artifact")
         return {
             "valid": not errors,

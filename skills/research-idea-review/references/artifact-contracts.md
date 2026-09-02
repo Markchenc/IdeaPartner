@@ -2,6 +2,8 @@
 
 Task packets contain exact required top-level keys. This reference defines the stable nested contracts. Keep content concise but structurally complete. Do not add fabricated values to satisfy a field; use an explicit missing or uncertain value where the contract allows it.
 
+The `artifact_contract` entry in every generated task packet is only a pointer to this shared serialization reference. It does not add a new reviewer or evaluation dimension. M5 has a larger payload section because its four isolated workers need a common handoff shape.
+
 ## Common submission envelope
 
 ```json
@@ -12,7 +14,7 @@ Task packets contain exact required top-level keys. This reference defines the s
   "consumed_inputs": [
     {
       "artifact_id": "m3-synthesis",
-      "sha256": "<exact digest from task packet>",
+      "artifact_version": 1,
       "used_for": "Constrained closest-work comparisons and field evidence norms."
     }
   ],
@@ -20,7 +22,7 @@ Task packets contain exact required top-level keys. This reference defines the s
 }
 ```
 
-Copy every input's `artifact_id` and `sha256` from the packet. `used_for` must name the actual role of that particular input in the output.
+Copy every input's `artifact_id` and `artifact_version` from the packet. `used_for` must name the actual role of that particular input in the output. Artifact versions identify the registered upstream result; they do not verify literature existence or semantic truth.
 
 The supervisor reads `summary` and `attention_items` to manage its compact main context. Downstream workers still read the complete pinned artifacts; summaries never satisfy a scientific dependency.
 
@@ -99,6 +101,8 @@ M3-foundation, M3-data, and M3-frontier share this contract:
 
 Supply at least one DOI, arXiv ID, OpenAlex ID, or public HTTPS URL. Do not write a `verification` field; ingestion creates it. Search-result snippets are candidate discovery material, not source records for decisive claims.
 
+`source_type` is a closed set. Use exactly one of `paper`, `dataset`, `benchmark`, `repository`, `official_docs`, or `first_party_report`. Arbitrary values are rejected, and every URL-only source type must pass HTML-title identity matching; reclassification cannot turn mere URL reachability into verification.
+
 ### Evidence claim
 
 ```json
@@ -162,6 +166,19 @@ expected_difficulties
 
 ## M5 review artifacts
 
+### What this contract is
+
+The M5 artifact contract is an inter-agent transport boundary. It makes four separate workers exchange inspectable, evidence-linked results without relying on a shared context. It is not a final Idea Evaluation Ontology, a scorecard, or a claim that the runtime can mechanically reproduce expert metacognition.
+
+The current four top-level fields have narrow roles:
+
+- `review_lens` records the maturity, contribution type, field norms, applicable questions, and details deliberately not required for this route;
+- `judgments` contains atomic review conclusions with provenance, canonical M3 evidence, alternatives, assumptions, coverage limits, change conditions, and actions;
+- `conclusion` is the worker's task-level synthesis, not the overall M7 decision;
+- `blocker` separates a high-evidence gate from an ordinary risk and states what it blocks.
+
+The runtime validates structural presence, provenance/evidence closure, and the minimum direct evidence required to declare a blocker. It does not validate whether the worker selected the best field-specific questions, reasoned correctly about a mechanism, resolved every scientific conflict, or calibrated the conclusion like a domain expert. Those semantics currently come from M1–M4, the dependency chain, and the M5 instructions.
+
 M5-A through M5-D share this shape:
 
 ```json
@@ -198,6 +215,10 @@ M5-A through M5-D share this shape:
 ```
 
 An active blocker requires at least one canonical M3 evidence claim that directly affects the core claim. A worker may still report an unresolved risk without declaring a blocker.
+
+### Deferred M5 redesign
+
+Keep this payload stable in the current PR. A later M5-focused PR may revise the internal judgment decomposition, contribution-conditioned question compiler, maturity-conditioned sufficiency rules, conflict representation, blocker semantics, and cross-task synthesis. That work should begin from actual review cases and does not belong to the runtime-concurrency and evidence-identity corrections here.
 
 ## M6 challenge
 

@@ -55,7 +55,7 @@ For every ready task:
 5. The worker writes the submission JSON to `output_contract.submission_path`.
 6. Ingest the submission. Do not copy unvalidated prose into the next stage.
 
-Each submission must acknowledge every input digest and briefly state how that artifact changed the result. This is an auditable consumption record, not a request for generic summaries.
+Each submission must acknowledge every input's registered artifact version and briefly state how that artifact changed the result. This is an auditable consumption record, not a request for generic summaries.
 
 Each submission also provides a two-to-four-sentence `summary` and a short `attention_items` list. These are copied into the manifest for supervisor status tracking. They never replace full upstream artifacts in a worker packet.
 
@@ -69,7 +69,9 @@ The task graph deliberately repeats important upstream artifacts:
 - Every M5 task reads original input, M1, M2, M3 synthesis, and M4; C additionally reads A/B, and D reads A/B/C.
 - M6 and M7 again read original input, M1, M2, M3 synthesis, M4, and all required review artifacts.
 
-Do not shorten a packet because an upstream worker “already knew” something. Paths are absolute, each file is pinned by SHA-256, and ingestion compares the worker acknowledgements to current versions. If M1, M2, or M3 changes, later artifacts become stale automatically.
+Do not shorten a packet because an upstream worker “already knew” something. Paths are absolute, each artifact has a monotonic version, and ingestion compares the worker acknowledgements to the versions currently registered in the manifest. If M1, M2, or M3 is replaced, its version increments and later artifacts that consumed an older version become stale automatically.
+
+Version binding protects workflow lineage; it does not claim that file bytes are authentic or that a cited paper exists. Source existence and metadata are checked by the evidence resolver. The manifest's complete read-modify-write transaction is protected by a cross-process file lock, and each process reloads the manifest only after acquiring that lock.
 
 This proves that the correct artifacts were supplied, versioned, and acknowledged. It cannot prove that a model reasoned perfectly from them; task-specific output contracts and independent M3 grounding make misuse visible for review.
 

@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests.helpers import (
     FakeSourceVerifier,
@@ -17,6 +18,7 @@ from tests.helpers import (
     submission,
 )
 from idea_review_runtime.pipeline import ReviewPipeline
+from idea_review_runtime.evidence import LiveSourceVerifier
 from idea_review_runtime.validation import EvidenceIntegrityError, ProvenanceIntegrityError
 
 
@@ -76,6 +78,29 @@ class EvidenceAndProvenanceTests(unittest.TestCase):
         verification = artifact["payload"]["sources"][0]["verification"]
         self.assertEqual("unverified", verification["status"])
         self.assertEqual("fake-resolver", verification["method"])
+
+    def test_unknown_source_type_cannot_bypass_identity_policy(self) -> None:
+        disguised_paper = source("paper-with-arbitrary-type")
+        disguised_paper["source_type"] = "web_page_that_should_be_treated_as_verified"
+        packet = self.pipeline.emit_task("m3-foundation")
+
+        with self.assertRaises(EvidenceIntegrityError):
+            self.pipeline.ingest(
+                "m3-foundation",
+                submission(packet, prior_phase_payload(sources=[disguised_paper])),
+            )
+
+    @patch(
+        "idea_review_runtime.evidence._http_text",
+        return_value=("<html><title>An Unrelated Resource</title></html>", "https://example.org/resource"),
+    )
+    def test_allowed_nonpaper_type_still_requires_matching_url_identity(self, _mock_http) -> None:
+        record = source("misclassified-paper")
+        record["source_type"] = "official_docs"
+        record["identifiers"] = {}
+        result = LiveSourceVerifier().verify(record)
+
+        self.assertEqual("metadata_mismatch", result["status"])
 
     def test_synthesis_cannot_cite_an_unregistered_source(self) -> None:
         self._ingest("m3-foundation", prior_phase_payload(sources=[source("paper-1")]))

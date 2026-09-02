@@ -13,6 +13,16 @@ from .artifacts import utc_now
 from .validation import EvidenceIntegrityError
 
 
+SOURCE_TYPES = {
+    "paper",
+    "dataset",
+    "benchmark",
+    "repository",
+    "official_docs",
+    "first_party_report",
+}
+
+
 class SourceVerifier(Protocol):
     def verify(self, source: dict[str, Any]) -> dict[str, Any]: ...
 
@@ -174,21 +184,17 @@ class LiveSourceVerifier:
         body, final_url = _http_text(url, self.timeout)
         title_match = re.search(r"<title[^>]*>(.*?)</title>", body, flags=re.IGNORECASE | re.DOTALL)
         actual_title = unescape(re.sub(r"<[^>]+>", " ", title_match.group(1))).strip() if title_match else ""
-        is_paper = source.get("source_type") == "paper"
         metadata_matches = bool(actual_title and _title_matches(source["title"], actual_title))
-        status = "verified" if not is_paper or metadata_matches else "metadata_mismatch"
         return {
-            "status": status,
+            "status": "verified" if metadata_matches else "metadata_mismatch",
             "method": "https-url",
             "checked_at": checked_at,
             "resolved_url": final_url,
             "matched_title": actual_title,
             "detail": (
-                "HTTPS resource resolved and the paper title matched."
-                if is_paper and metadata_matches
-                else "HTTPS resource resolved; bibliographic fields were not independently verified."
-                if not is_paper
-                else "HTTPS paper resource resolved but its HTML title did not match."
+                "HTTPS resource resolved and its HTML title matched."
+                if metadata_matches
+                else "HTTPS resource resolved but its HTML title was absent or did not match."
             ),
         }
 
@@ -202,6 +208,11 @@ def normalize_and_verify_source(source: Any, verifier: SourceVerifier) -> dict[s
         raise EvidenceIntegrityError(f"Source is missing required fields: {', '.join(missing)}")
     if not isinstance(source["source_id"], str) or not source["source_id"].strip():
         raise EvidenceIntegrityError("source_id must be a non-empty string")
+    if not isinstance(source["source_type"], str) or source["source_type"] not in SOURCE_TYPES:
+        allowed = ", ".join(sorted(SOURCE_TYPES))
+        raise EvidenceIntegrityError(
+            f"Source {source['source_id']} has unsupported source_type {source['source_type']!r}; allowed: {allowed}"
+        )
     if not isinstance(source["title"], str) or not source["title"].strip():
         raise EvidenceIntegrityError(f"Source {source['source_id']} must have a title")
     if not isinstance(source["authors"], list):
@@ -216,7 +227,7 @@ def normalize_and_verify_source(source: Any, verifier: SourceVerifier) -> dict[s
 
     normalized = {
         "source_id": source["source_id"].strip(),
-        "source_type": str(source["source_type"]),
+        "source_type": source["source_type"],
         "title": source["title"].strip(),
         "authors": [str(author) for author in source["authors"]],
         "year": source["year"],

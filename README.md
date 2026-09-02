@@ -18,13 +18,17 @@ The skill deliberately avoids a single quality score, paper-acceptance predictio
 
 ## Why the runtime exists
 
-Separate agent contexts reduce context overload but can silently lose upstream assumptions. IdeaPartner therefore materializes dependencies as files. Every task packet lists all required artifacts with SHA-256 digests, and every worker submission must acknowledge how it used them. M4–M7 explicitly receive M1, M2, and canonical M3 rather than relying on shared conversation history.
+Separate agent contexts reduce context overload but can silently lose upstream assumptions. IdeaPartner therefore materializes dependencies as files. Every task packet lists all required artifacts by registered version, and every worker submission must acknowledge how it used them. Replacing an upstream artifact increments its version and makes consumers of the previous version stale. M4–M7 explicitly receive M1, M2, and canonical M3 rather than relying on shared conversation history.
+
+Artifact versions preserve orchestration lineage; they are not evidence-authenticity checks. Literature existence and identity are validated separately through DOI, arXiv, OpenAlex, or public HTTPS resolution and metadata matching.
 
 The runtime validates only three high-impact invariants:
 
 - checkpoint and dependency order, including stale upstream versions;
 - source identity, registered evidence closure, and direct evidence for blockers;
 - provenance separation between researcher-stated, evidence-supported, inferred, and missing content.
+
+Manifest read-modify-write transactions are serialized with a cross-process file lock, so M3 and M5 parallel workers cannot overwrite one another's manifest updates.
 
 It does not validate prose style, arbitrary headings, answer length, or numeric scores.
 
@@ -82,5 +86,9 @@ See [runtime orchestration](skills/research-idea-review/references/runtime-orche
 ~~~bash
 python -m unittest discover -s tests -v
 ~~~
+
+## Continuous integration
+
+GitHub Actions runs the runtime compilation and full test suite on Ubuntu and Windows with Python 3.11 and 3.13.
 
 The planned V2 continuous companion will build on lessons from V1 after the single-review workflow has been exercised and revised.

@@ -35,7 +35,7 @@ def submission(packet: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any
         "consumed_inputs": [
             {
                 "artifact_id": item["artifact_id"],
-                "sha256": item["sha256"],
+                "artifact_version": item["artifact_version"],
                 "used_for": f"Used to execute {packet['task_id']}",
             }
             for item in packet["inputs"]
