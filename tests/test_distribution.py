@@ -12,7 +12,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_MANIFEST = REPOSITORY_ROOT / ".codex-plugin" / "plugin.json"
-SKILL_ROOT = REPOSITORY_ROOT / "skills" / "research-idea-review"
+SKILL_ROOT = REPOSITORY_ROOT / "skills" / "ideapartner"
 SCRIPTS_ROOT = SKILL_ROOT / "scripts"
 
 if str(SCRIPTS_ROOT) not in sys.path:
@@ -30,8 +30,15 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual("Apache-2.0", manifest["license"])
         self.assertEqual("./skills/", manifest["skills"])
         self.assertTrue((REPOSITORY_ROOT / manifest["skills"]).is_dir())
+        self.assertEqual("ideapartner", SKILL_ROOT.name)
         self.assertTrue((SKILL_ROOT / "SKILL.md").is_file())
         self.assertTrue((SKILL_ROOT / "agents" / "openai.yaml").is_file())
+
+        skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        interface_text = (SKILL_ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        self.assertIn("name: ideapartner", skill_text.split("---", 2)[1])
+        self.assertIn('display_name: "IdeaPartner"', interface_text)
+        self.assertIn("$ideapartner", interface_text)
 
     def test_packaged_copy_runs_from_a_unicode_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -45,7 +52,7 @@ class DistributionTests(unittest.TestCase):
             idea_path = work_dir / "idea.md"
             idea_path.write_text("# Idea\n\nEvaluate an early research idea.\n", encoding="utf-8")
             runs_dir = work_dir / "审查运行"
-            runtime = plugin_root / "skills" / "research-idea-review" / "scripts" / "idea_review.py"
+            runtime = plugin_root / "skills" / "ideapartner" / "scripts" / "idea_review.py"
             environment = os.environ.copy()
             environment["PYTHONUTF8"] = "1"
 
@@ -66,6 +73,10 @@ class DistributionTests(unittest.TestCase):
             init_result = json.loads(initialized.stdout)
             self.assertEqual("POSITIONING", init_result["state"])
             self.assertEqual(["m1-positioning"], init_result["ready_tasks"])
+            run_manifest = json.loads(
+                (runs_dir / "distribution-smoke" / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(__version__, run_manifest["runtime_version"])
 
             status = self._run(
                 runtime,

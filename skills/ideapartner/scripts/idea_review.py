@@ -93,7 +93,7 @@ def command_validate(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Deterministic artifact runtime for the IdeaPartner research-idea-review skill."
+        description="Deterministic artifact runtime for the IdeaPartner skill."
     )
     parser.add_argument("--version", action="version", version=f"IdeaPartner runtime {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)

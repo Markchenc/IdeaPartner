@@ -82,7 +82,7 @@ class ReviewPipeline:
         created_at = utc_now()
         manifest = {
             "schema_version": 1,
-            "runtime_version": "1.1.0",
+            "runtime_version": "1.1.1",
             "run_id": run_id,
             "created_at": created_at,
             "updated_at": created_at,

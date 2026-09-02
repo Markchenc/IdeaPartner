@@ -1,0 +1,6 @@
+interface:
+  display_name: "IdeaPartner"
+  short_description: "Checkpointed, evidence-grounded idea review"
+  default_prompt: "Use $ideapartner to run a checkpointed, context-isolated review of my research idea."
+policy:
+  allow_implicit_invocation: true
