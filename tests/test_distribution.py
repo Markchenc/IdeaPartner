@@ -71,8 +71,8 @@ class DistributionTests(unittest.TestCase):
                 env=environment,
             )
             init_result = json.loads(initialized.stdout)
-            self.assertEqual("POSITIONING", init_result["state"])
-            self.assertEqual(["m1-positioning"], init_result["ready_tasks"])
+            self.assertEqual("PLANNING", init_result["state"])
+            self.assertEqual(["s1-plan"], init_result["ready_tasks"])
             run_manifest = json.loads(
                 (runs_dir / "distribution-smoke" / "manifest.json").read_text(encoding="utf-8")
             )
@@ -87,7 +87,22 @@ class DistributionTests(unittest.TestCase):
             )
             status_result = json.loads(status.stdout)
             self.assertEqual("distribution-smoke", status_result["run_id"])
-            self.assertEqual("POSITIONING", status_result["state"])
+            self.assertEqual("PLANNING", status_result["state"])
+
+            # Exercise the installed CLI through all three stages without a confirmation command.
+            from tests.helpers import plan, review, report
+            for task_id, payload in (("s1-plan", plan()), ("s2-review", review()), ("s3-report", report())):
+                emitted = self._run(runtime, "emit-task", runs_dir / "distribution-smoke", task_id,
+                                    cwd=work_dir, env=environment)
+                packet_id = json.loads(emitted.stdout)["packet_id"]
+                submission_path = work_dir / "submission.json"
+                submission_path.write_text(json.dumps({"task_id": task_id, "packet_id": packet_id,
+                                                       "payload": payload}), encoding="utf-8")
+                self._run(runtime, "ingest", runs_dir / "distribution-smoke", task_id, submission_path,
+                          cwd=work_dir, env=environment)
+            checked = self._run(runtime, "validate", runs_dir / "distribution-smoke", cwd=work_dir, env=environment)
+            self.assertEqual("FINALIZED", json.loads(checked.stdout)["state"])
+            self.assertTrue(json.loads(checked.stdout)["valid"])
 
     def _run(
         self,
