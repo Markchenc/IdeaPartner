@@ -43,7 +43,7 @@ def _title_matches(expected: str, actual: str) -> bool:
 def _http_json(url: str, timeout: float) -> tuple[dict[str, Any], str]:
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "IdeaPartner/1.1 (+https://github.com/Markchenc/IdeaPartner)"},
+        headers={"User-Agent": "IdeaPartner/2.0 (+https://github.com/Markchenc/IdeaPartner)"},
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         final_url = response.geturl()
@@ -57,7 +57,7 @@ def _http_json(url: str, timeout: float) -> tuple[dict[str, Any], str]:
 def _http_text(url: str, timeout: float) -> tuple[str, str]:
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "IdeaPartner/1.1 (+https://github.com/Markchenc/IdeaPartner)"},
+        headers={"User-Agent": "IdeaPartner/2.0 (+https://github.com/Markchenc/IdeaPartner)"},
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         final_url = response.geturl()
@@ -220,6 +220,12 @@ def normalize_and_verify_source(source: Any, verifier: SourceVerifier) -> dict[s
     identifiers = source.get("identifiers", {})
     if not isinstance(identifiers, dict):
         raise EvidenceIntegrityError(f"Source {source['source_id']} identifiers must be an object")
+    if source.get("url"):
+        if not isinstance(source["url"], str):
+            raise EvidenceIntegrityError("Source URL must be text")
+        parsed = urllib.parse.urlsplit(source["url"])
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise EvidenceIntegrityError("Source citations require an HTTPS URL")
     if not any(identifiers.get(key) for key in ("doi", "arxiv", "openalex")) and not source.get("url"):
         raise EvidenceIntegrityError(
             f"Source {source['source_id']} requires a DOI, arXiv ID, OpenAlex ID, or HTTPS URL"

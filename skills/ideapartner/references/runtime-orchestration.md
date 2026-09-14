@@ -1,104 +1,46 @@
-# Runtime Orchestration
+# Runtime orchestration
 
-Use the runtime for every full review. It turns the scientific workflow into an auditable artifact graph; it does not replace scientific judgment.
+The supervisor dispatches exactly three main cognitive roles, each in a separate worker context. It uses status and compact exceptions, not every worker's full prose. Automatically proceed between stages; there is no confirm command.
 
-## Supervisor responsibility
+The runtime is `scripts/idea_review.py` relative to this skill. Use its absolute path from the researcher's workspace. Runs default to `.idea-review/runs/`; never put research outputs in the installed skill.
 
-The main Codex context is a supervisor. Keep only:
-
-- the run directory and current state;
-- the latest researcher checkpoint decision;
-- ready, blocked, and stale task IDs;
-- concise artifact summaries and exceptions requiring researcher attention.
-
-Do not perform M3–M7 as one continuous hidden chain in the supervisor context. Generate a task packet and dispatch each bounded task to a fresh Codex worker context when isolated workers are available. A worker receives the packet path, not the entire chat transcript.
-
-The supervisor remains responsible for:
-
-- showing M1 to the researcher and actually waiting;
-- deciding when a worker result needs another bounded retrieval pass;
-- ingesting only completed submissions;
-- presenting the final report and material limitations.
-
-## Runtime entrypoint
-
-The runtime uses only the Python standard library:
+## Commands
 
 ```text
-scripts/idea_review.py
+python <runtime> init <idea.md> --run-id <id> --max-rechecks 1 --review-deadline-minutes 30
+python <runtime> status <run>
+python <runtime> emit-task <run> s1-plan
+python <runtime> ingest <run> s1-plan <submission.json>
+python <runtime> emit-task <run> s2-review
+python <runtime> evidence-add <run> <batch.json>
+python <runtime> ingest <run> s2-review <submission.json>
+python <runtime> emit-task <run> s3-report
+python <runtime> ingest <run> s3-report <submission.json>
+python <runtime> validate <run>
 ```
 
-Run it from the researcher's workspace by using the script's absolute path. In the examples below, `<runtime>` means the absolute `scripts/idea_review.py` path inside this skill:
+emit-task returns task_packet and packet_id. Send the packet path to the stage worker. The worker reads the packet's required inputs, its instruction and relevant contract section, then writes to submission_path. Submission is {task_id, packet_id, payload}; no model-authored input/version summaries.
 
-```bash
-python <runtime> init idea.md --run-id <run-id>
-python <runtime> status .idea-review/runs/<run-id>
-python <runtime> emit-task .idea-review/runs/<run-id> m1-positioning
-python <runtime> ingest .idea-review/runs/<run-id> m1-positioning <submission.json>
-python <runtime> confirm .idea-review/runs/<run-id> --checkpoint positioning --note "<researcher response>"
-python <runtime> validate .idea-review/runs/<run-id>
-```
+The runtime stores immutable snapshots and binds inputs to packet IDs. It detects stale versions; this does not prove that a model consumed or correctly understood those inputs.
 
-Resolve these paths relative to this skill directory. Put review runs in the researcher's current workspace, normally under `.idea-review/runs/`; never store them inside the installed skill.
+## Stage-two loop
 
-## Worker protocol
+Keep the s2 agent context across retrievals. Before new research, check status.research_allowed. The timer begins at the first s2 packet and does not reset on re-emission. At expiry, stop new retrieval and submit the current review with uncertainty; report generation remains allowed. The runtime cannot interrupt an already running host tool.
 
-For every ready task:
+Each meaningful batch uses evidence-add, not another worker. Its result includes accepted/candidate claims, alias IDs, source versions and cache hits. Use returned canonical IDs/versions. On network failure keep candidate sources separate; do not use them as verified support. Deferred mode is for temporary network unavailability, not a shortcut to verification.
 
-1. Run `emit-task`.
-2. Start a fresh worker context.
-3. Give it the absolute task-packet path and ask it to execute that packet exactly.
-4. The worker reads:
-   - every item in `inputs`, in full;
-   - the specified instruction file and section;
-   - the artifact contract for its task.
-5. The worker writes the submission JSON to `output_contract.submission_path`.
-6. Ingest the submission. Do not copy unvalidated prose into the next stage.
+For long work save a compact current-review draft and unresolved questions at recovery_path. This is optional recovery data, never a canonical report input. Following context loss, read the current plan, saved draft and required evidence snapshot entries rather than rerun finished research.
 
-Each submission must acknowledge every input's registered artifact version and briefly state how that artifact changed the result. This is an auditable consumption record, not a request for generic summaries.
+## Report and recheck
 
-Each submission also provides a two-to-four-sentence `summary` and a short `attention_items` list. These are copied into the manifest for supervisor status tracking. They never replace full upstream artifacts in a worker packet.
+s3 reads original input, plan, review and its evidence_view. That view includes all cited support, counterevidence and closest-work evidence; the complete ledger is optional, not required. Reopen decisive passages when checking the central conclusion.
 
-M3-foundation, M3-data, and M3-frontier may run in parallel in separate contexts. M5-A and M5-B may also run in parallel. All other task ordering comes from the emitted dependency graph.
+If a material gap remains, submit recheck_request instead of payload. The runtime returns to s2; continue that worker with a new packet containing the request and previous review. Resubmit only the current integrated review, then run s3 again. Default one recheck. At limit_reached, finish using the same report packet with explicit limitations; do not loop or ask for workflow confirmation.
 
-## Dependency preservation across isolated contexts
+## Completion and failure
 
-The task graph deliberately repeats important upstream artifacts:
+Show the manifest's versioned final_report path after validate is valid and state is FINALIZED. final-report.md is a convenience copy; the manifest points to the authoritative version.
 
-- M4 reads original input, M1, M2, and M3 synthesis.
-- Every M5 task reads original input, M1, M2, M3 synthesis, and M4; C additionally reads A/B, and D reads A/B/C.
-- M6 and M7 again read original input, M1, M2, M3 synthesis, M4, and all required review artifacts.
+Stale packet: re-emit the affected task. Evidence conflict: retry the batch against current state with the same content/ID; never force overwrite. Schema error: repair the submission. Unknown source: retain uncertainty or supply verified evidence. None of these failures creates a positioning approval gate.
 
-Do not shorten a packet because an upstream worker “already knew” something. Paths are absolute, each artifact has a monotonic version, and ingestion compares the worker acknowledgements to the versions currently registered in the manifest. If M1, M2, or M3 is replaced, its version increments and later artifacts that consumed an older version become stale automatically.
-
-Version binding protects workflow lineage; it does not claim that file bytes are authentic or that a cited paper exists. Source existence and metadata are checked by the evidence resolver. The manifest's complete read-modify-write transaction is protected by a cross-process file lock, and each process reloads the manifest only after acquiring that lock.
-
-This proves that the correct artifacts were supplied, versioned, and acknowledged. It cannot prove that a model reasoned perfectly from them; task-specific output contracts and independent M3 grounding make misuse visible for review.
-
-## Checkpoints
-
-After M1 ingestion, show the positioning card and stop the current turn. Do not execute `confirm`, M2, or any retrieval until the researcher explicitly confirms or corrects the positioning.
-
-If M3 reports `repositioning.required: true`, the runtime creates a second stop before M4. Show the evidence-driven change and ask the researcher. Confirm it only after an explicit response. If the correction changes canonical M1 content, replace M1 and rerun every artifact that becomes stale.
-
-## Evidence verification modes
-
-M3 discovery ingestion defaults to live verification. The runtime disregards any worker-authored `verification` field and resolves source identity using DOI/Crossref, arXiv, OpenAlex, or a public HTTPS resource.
-
-Use deferred mode only when network resolution is temporarily unavailable:
-
-```bash
-python <runtime> ingest <run-dir> <m3-task> <submission.json> --verification-mode deferred
-```
-
-Deferred sources remain candidates. They cannot support an evidence claim, blocker, or final citation until a live-verified M3 artifact replaces them. Network failure means “unverified,” never “the work does not exist.”
-
-## Recovery behavior
-
-- Missing dependency: complete or regenerate the named upstream task.
-- Stale dependency: re-emit and replace the earliest stale artifact, then follow the state forward.
-- Unverified source: correct its identifier/metadata, retrieve a stronger direct source, or keep the affected conclusion uncertain.
-- Unsupported evidence relation: return to M3 synthesis and ground the claim with an exact locator; do not patch the M5 wording.
-- Checkpoint block: ask the researcher; never synthesize a confirmation.
-
-Use `--replace` only for a deliberate new artifact version. Replacing upstream work is recoverable because old downstream files remain present but are marked stale.
+schema_version=1 runs are read-only. New work must initialize v2 from input.md; use the old release to continue the original v1 workflow. Do not convert old judgments automatically.

@@ -1,125 +1,81 @@
 # IdeaPartner
 
-IdeaPartner is a collection of skills for the first mile of research: positioning, examining, and eventually developing research ideas before they become full proposals or papers.
+A three-stage, evidence-grounded review of one research idea. Plan the review, investigate decision-changing questions, then reconstruct the original idea and deliver a report.
 
 ## Requirements
 
-- Codex or the ChatGPT desktop app with local skill support;
-- Python 3.11 or newer;
-- filesystem and subprocess access for the deterministic review runtime;
-- network access during M3 when live source identity verification is enabled.
+- A Codex host with local skills, filesystem access and isolated worker contexts.
+- Python 3.11 or newer; no third-party runtime dependencies.
+- Research tools and network access for source verification. Unresolved sources remain candidates, and the review may conclude with insufficient evidence.
 
-The runtime has no third-party Python package dependency. If live verification cannot resolve a source, the source remains a visible candidate but cannot support an evidence claim or blocker.
+## Current version
 
-## Install
+This checkout implements runtime/plugin **2.0.0**. It does not imply a v2.0.0 GitHub tag has been published. Install the local plugin or the local `skills/ideapartner` folder through your host's existing installation workflow. The canonical skill name remains `ideapartner`; implicit invocation remains enabled.
 
-For case testing, install the standalone skill from the versioned GitHub path:
-
-~~~text
-$skill-installer install https://github.com/Markchenc/IdeaPartner/tree/v1.1.1/skills/ideapartner
-~~~
-
-Private repository installation requires GitHub credentials already available to Git or the installer. The skill becomes available on the next turn; restart Codex if it does not appear.
-
-Invoke it explicitly with a single research idea:
+Invoke with:
 
 ~~~text
 $ideapartner Review this research idea: <your idea>
 ~~~
 
-Implicit invocation is also enabled for requests that clearly ask to position, evaluate, stress-test, or decide whether to pursue one research idea.
+The supervisor completes the workflow without positioning or repositioning confirmation:
 
-The repository root also contains `.codex-plugin/plugin.json`, so the same skill is packaged as the `ideapartner` plugin for marketplace or workspace distribution. The plugin and deterministic runtime share version `1.1.1`.
+1. **s1-plan:** short original-claim and decision-question brief.
+2. **s2-review:** targeted research, evidence batches, four-dimensional review and consequential challenges in one worker.
+3. **s3-report:** six-part original-idea reconstruction, assessment, limitations and next actions in a fresh worker.
 
-The canonical standalone skill name is `ideapartner`. If you installed the temporary `v1.1.0` package, remove its legacy `research-idea-review` directory before installing `v1.1.1`. To update or uninstall later, remove the installed `ideapartner` directory and restart Codex.
+No mandatory historical tree or full field map. No separate agent for every dimension or search. The final worker receives the current review and the evidence it cites, including counterevidence, rather than the entire research transcript.
 
-## Current implementation
+## Runtime quick start
 
-V1.1 provides a single-review Codex skill at [skills/ideapartner](skills/ideapartner/SKILL.md). It combines researcher-facing interaction with a deterministic Python artifact pipeline:
-
-1. structure the idea's field, scenario, research object, difficulty, contribution type, and maturity;
-2. stop for researcher confirmation;
-3. compile a maturity- and contribution-conditioned review route;
-4. construct a verified historical evolution tree and layered field prior through isolated literature workers;
-5. reconstruct the idea into six provenance-tagged sections;
-6. review it through the dependent M5-A/B/C/D chain;
-7. run at most three targeted challenges and synthesize M4/M5/M7 for the researcher.
-
-The skill deliberately avoids a single quality score, paper-acceptance prediction, and autonomous completion of missing idea content.
-
-## Why the runtime exists
-
-Separate agent contexts reduce context overload but can silently lose upstream assumptions. IdeaPartner therefore materializes dependencies as files. Every task packet lists all required artifacts by registered version, and every worker submission must acknowledge how it used them. Replacing an upstream artifact increments its version and makes consumers of the previous version stale. M4–M7 explicitly receive M1, M2, and canonical M3 rather than relying on shared conversation history.
-
-Artifact versions preserve orchestration lineage; they are not evidence-authenticity checks. Literature existence and identity are validated separately through DOI, arXiv, OpenAlex, or public HTTPS resolution and metadata matching.
-
-The runtime validates only three high-impact invariants:
-
-- checkpoint and dependency order, including stale upstream versions;
-- source identity, registered evidence closure, and direct evidence for blockers;
-- provenance separation between researcher-stated, evidence-supported, inferred, and missing content.
-
-Manifest read-modify-write transactions are serialized with a cross-process file lock, so M3 and M5 parallel workers cannot overwrite one another's manifest updates.
-
-It does not validate prose style, arbitrary headings, answer length, or numeric scores.
-
-## Repository layout
+From the repository root:
 
 ~~~text
-skills/
-  ideapartner/
-    SKILL.md
-    agents/openai.yaml
-    references/
-    scripts/
-      idea_review.py
-      idea_review_runtime/
-tests/
-docs/
-  adr/
-  plans/
-~~~
-
-## Quick start
-
-The following commands are for runtime development and diagnostics from the repository root:
-
-~~~bash
-python skills/ideapartner/scripts/idea_review.py init /path/to/idea.md --run-id my-review
+python skills/ideapartner/scripts/idea_review.py init idea.md --run-id my-review
 python skills/ideapartner/scripts/idea_review.py status .idea-review/runs/my-review
-python skills/ideapartner/scripts/idea_review.py emit-task .idea-review/runs/my-review m1-positioning
+python skills/ideapartner/scripts/idea_review.py emit-task .idea-review/runs/my-review s1-plan
 ~~~
 
-Give the generated task packet to a fresh Codex worker and have it write the submission path specified in the packet. Then ingest it:
+Give the returned task packet to a stage worker. Ingest its submission and automatically follow ready_tasks:
 
-~~~bash
-python skills/ideapartner/scripts/idea_review.py ingest .idea-review/runs/my-review m1-positioning /path/to/submission.json
+~~~text
+python skills/ideapartner/scripts/idea_review.py ingest .idea-review/runs/my-review s1-plan submission.json
 ~~~
 
-The pipeline now reports WAITING_FOR_POSITIONING_CONFIRMATION. Display M1 and wait for the researcher. Only after explicit confirmation:
+During s2, save meaningful evidence batches:
 
-~~~bash
-python skills/ideapartner/scripts/idea_review.py confirm .idea-review/runs/my-review --checkpoint positioning --note "Confirmed by researcher"
+~~~text
+python skills/ideapartner/scripts/idea_review.py evidence-add .idea-review/runs/my-review batch.json
 ~~~
 
-Continue with the task IDs reported by status. M3 source identity verification is live by default. A network-unresolved source remains visible as a candidate but cannot support an evidence claim or blocker.
+Source identity is verified separately from semantic support. Candidate or snippet-only evidence cannot support a decisive contribution judgment. Evidence references retain source and claim versions; changing relevant evidence invalidates affected results.
 
-Run the core integrity audit at any time:
+The research deadline defaults to 30 minutes from the first s2 packet; configure it with --review-deadline-minutes. Expiry stops new research, not qualified review/report completion. At most one targeted recheck is allowed by default (--max-rechecks). These are configurable bounds, not measured optimal settings.
 
-~~~bash
+Python creates packets and validates artifacts; it does not launch models or independently perform literature research. The host supervisor implements stage isolation. Source metadata/locators and schema validation cannot prove semantic correctness.
+
+## Output and recovery
+
+The final report contains the six original-idea sections, four review dimensions, one decision, suggestions and limitations. Inferred or missing content is explicitly labelled. Recommendations are separate from the researcher's original idea.
+
+~~~text
 python skills/ideapartner/scripts/idea_review.py validate .idea-review/runs/my-review
 ~~~
 
-See [runtime orchestration](skills/ideapartner/references/runtime-orchestration.md) and [artifact contracts](skills/ideapartner/references/artifact-contracts.md) for the worker protocol.
+Present the versioned report in status.exports when validation succeeds and state is FINALIZED. final-report.md is a convenience copy. Immutable snapshots and a run lock protect manifest updates; uncommitted files do not become authoritative.
+
+Stage 2 can save a compact recovery-review.json draft; a resumed worker reads it and the required evidence without redoing completed research.
+
+## Compatibility
+
+Schema v1 runs are read-only in v2. They are not automatically migrated. Initialize a new run from the original input, or use the previous release to continue an old run. Existing installed copies do not change merely because this repository is edited.
 
 ## Development
 
-~~~bash
+~~~text
 python -m unittest discover -s tests -v
 ~~~
 
-## Continuous integration
+Tests use deterministic source-verifier fixtures and cover normal completion, stale packets, evidence identity and versions, counterevidence forwarding, bounded rechecks, report fidelity structure, failed commits and Unicode packaging. They do not establish literature-review quality or real token savings; evaluate those on held-out research ideas with comparable host/model settings.
 
-GitHub Actions runs the runtime compilation and full test suite on Ubuntu and Windows with Python 3.11 and 3.13.
-
-The planned V2 continuous companion will build on lessons from V1 after the single-review workflow has been exercised and revised.
+See [implementation design](docs/plans/2026-09-14-three-stage-runtime-design.md), [skill entrypoint](skills/ideapartner/SKILL.md), and [artifact contracts](skills/ideapartner/references/artifact-contracts.md).

@@ -1,651 +1,328 @@
 from __future__ import annotations
-
 import copy
-import re
+import json
+import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
 
+from . import __version__
 from .artifacts import atomic_write_json, atomic_write_text, read_json, utc_now
-from .evidence import (
-    LiveSourceVerifier,
-    SourceVerifier,
-    merge_source_ledgers,
-    normalize_and_verify_sources,
-)
+from .evidence import LiveSourceVerifier
+from .ledger import empty_ledger, prepare_batch, evidence_view, digest
 from .locking import InterProcessFileLock
-from .tasks import (
-    ARTIFACT_PURPOSES,
-    INPUT_ARTIFACT_ID,
-    M3_DISCOVERY_TASKS,
-    M5_TASKS,
-    TASK_ORDER,
-    TASKS,
-    TaskSpec,
-)
-from .validation import (
-    CheckpointRequired,
-    EvidenceIntegrityError,
-    MissingDependency,
-    PipelineError,
-    ProvenanceIntegrityError,
-    RunNotFound,
-    StaleDependency,
-    SubmissionError,
-    TaskAlreadyComplete,
-    evidence_claim_ledger,
-    require_keys,
-    validate_citation_claim_ids,
-    validate_consumed_inputs,
-    validate_evidence_claims,
-    validate_optional_evidence_claim_ids,
-    validate_provenance_sections,
-    validate_review_payload,
-    validate_source_ids,
-)
-
-
-RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-MANIFEST_NAME = "manifest.json"
+from .tasks import TASKS, TASK_ORDER
+from .validation import (PipelineError, RunNotFound, MissingDependency, StaleDependency,
+                         SubmissionError, EvidenceIntegrityError, TaskAlreadyComplete,
+                         identifier, require_keys, nonempty, strings, refs_in, validate_refs,
+                         validate_plan, validate_review, validate_report)
+from .report import render_report
 
 
 class ReviewPipeline:
-    def __init__(self, run_dir: Path, *, source_verifier: SourceVerifier | None = None) -> None:
+    def __init__(self, run_dir, *, source_verifier=None):
         self.run_dir = Path(run_dir).resolve()
-        self.manifest_path = self.run_dir / MANIFEST_NAME
-        self.lock_path = self.run_dir / ".manifest.lock"
-        if not self.manifest_path.is_file():
-            raise RunNotFound(f"No IdeaPartner run manifest exists at {self.manifest_path}")
+        self.manifest_path = self.run_dir / "manifest.json"
+        if not self.manifest_path.is_file(): raise RunNotFound(str(self.manifest_path))
         self.source_verifier = source_verifier or LiveSourceVerifier()
-        self._manifest = read_json(self.manifest_path)
         self.skill_root = Path(__file__).resolve().parents[2]
+        self._manifest = read_json(self.manifest_path)
+        if self._manifest.get("schema_version") not in (1, 2): raise PipelineError("Unsupported manifest schema")
 
     @classmethod
-    def create(
-        cls,
-        runs_dir: Path,
-        idea_text: str,
-        *,
-        run_id: str,
-        source_verifier: SourceVerifier | None = None,
-    ) -> "ReviewPipeline":
-        if not RUN_ID_PATTERN.fullmatch(run_id):
-            raise PipelineError("run_id must contain only letters, digits, dots, underscores, or hyphens")
-        if not idea_text.strip():
-            raise PipelineError("The idea input cannot be empty")
-        run_dir = Path(runs_dir).resolve() / run_id
-        if run_dir.exists() and any(run_dir.iterdir()):
-            raise PipelineError(f"Run directory already exists and is not empty: {run_dir}")
-        run_dir.mkdir(parents=True, exist_ok=True)
-        input_path = run_dir / "input.md"
-        atomic_write_text(input_path, idea_text.rstrip() + "\n")
-        created_at = utc_now()
-        manifest = {
-            "schema_version": 1,
-            "runtime_version": "1.1.1",
-            "run_id": run_id,
-            "created_at": created_at,
-            "updated_at": created_at,
-            "state": "POSITIONING",
-            "artifacts": {
-                INPUT_ARTIFACT_ID: {
-                    "artifact_id": INPUT_ARTIFACT_ID,
-                    "path": "input.md",
-                    "version": 1,
-                    "produced_by": "researcher",
-                    "created_at": created_at,
-                }
-            },
-            "checkpoints": {
-                "positioning": {
-                    "status": "pending",
-                    "artifact_version": None,
-                    "note": "",
-                    "decided_at": None,
-                },
-                "post-m3": {
-                    "status": "not_required",
-                    "artifact_version": None,
-                    "note": "",
-                    "decided_at": None,
-                },
-            },
-            "task_packets": {},
-            "exports": {},
-        }
-        atomic_write_json(run_dir / MANIFEST_NAME, manifest)
-        return cls(run_dir, source_verifier=source_verifier)
+    def create(cls, runs_dir, idea_text, *, run_id, source_verifier=None, max_rechecks=1, review_deadline_minutes=30):
+        identifier(run_id)
+        nonempty(idea_text, "idea input")
+        if type(max_rechecks) is not int or not 0 <= max_rechecks <= 3: raise PipelineError("max_rechecks must be 0..3")
+        if not isinstance(review_deadline_minutes, (int, float)) or not 0 < review_deadline_minutes <= 1440:
+            raise PipelineError("review deadline must be 0..1440 minutes")
+        directory = Path(runs_dir).resolve() / run_id
+        # Exclusive directory creation prevents two initializers from sharing a run.
+        directory.parent.mkdir(parents=True, exist_ok=True)
+        try: directory.mkdir()
+        except FileExistsError: raise PipelineError("Run directory already exists")
+        atomic_write_text(directory / "input.md", idea_text.rstrip() + "\n")
+        manifest = {"schema_version": 2, "runtime_version": __version__, "run_id": run_id,
+                    "created_at": utc_now(), "updated_at": utc_now(), "state": "PLANNING",
+                    "artifacts": {"input": {"path": "input.md", "version": 1}},
+                    "evidence_snapshot": None, "evidence_revision": 0, "task_packets": {},
+                    "budget": {"max_rechecks": max_rechecks, "review_deadline_minutes": review_deadline_minutes,
+                               "review_started_at": None},
+                    "recheck": {"count": 0, "pending": None}, "review_dirty": False, "exports": {}}
+        atomic_write_json(directory / "manifest.json", manifest)
+        return cls(directory, source_verifier=source_verifier)
 
     @property
-    def manifest(self) -> dict[str, Any]:
-        with self._transaction():
-            return copy.deepcopy(self._manifest)
+    def manifest(self):
+        with self._transaction(): return copy.deepcopy(self._manifest)
 
     @contextmanager
-    def _transaction(self) -> Iterator[None]:
-        with InterProcessFileLock(self.lock_path):
+    def _transaction(self):
+        # Legacy reads never create lock files or mutate old runs.
+        if self._manifest["schema_version"] == 1:
+            self._manifest = read_json(self.manifest_path)
+            yield
+            return
+        with InterProcessFileLock(self.run_dir / ".manifest.lock"):
             self._manifest = read_json(self.manifest_path)
             yield
 
-    def _save_manifest(self) -> None:
-        self._manifest["updated_at"] = utc_now()
+    def _writable(self):
+        if self._manifest["schema_version"] != 2:
+            raise PipelineError("Legacy run is read-only; create a v2 run from input.md or use the old release")
+
+    def _path(self, relative):
+        path = (self.run_dir / relative).resolve()
+        if not path.is_relative_to(self.run_dir): raise PipelineError("Path escapes run directory")
+        return path
+
+    def _save(self):
         self._manifest["state"] = self.compute_state()
+        self._manifest["updated_at"] = utc_now()
         atomic_write_json(self.manifest_path, self._manifest)
 
-    def _artifact_record(self, artifact_id: str) -> dict[str, Any] | None:
-        record = self._manifest.get("artifacts", {}).get(artifact_id)
-        return record if isinstance(record, dict) else None
+    def _payload(self, aid):
+        return read_json(self._path(self._manifest["artifacts"][aid]["path"]))["payload"]
 
-    def _artifact_path(self, artifact_id: str) -> Path:
-        record = self._artifact_record(artifact_id)
-        if not record:
-            raise MissingDependency(f"Artifact {artifact_id} is missing")
-        return self.run_dir / record["path"]
+    def _ledger(self):
+        path = self._manifest["evidence_snapshot"]
+        return read_json(self._path(path)) if path else empty_ledger()
 
-    def artifact_is_fresh(self, artifact_id: str) -> bool:
-        return self._artifact_is_fresh(artifact_id, {}, set())
+    def _questions(self):
+        questions = dict(self._ledger()["questions"])
+        if "plan" in self._manifest["artifacts"]:
+            questions.update({q["id"]: q for q in self._payload("plan")["review_questions"]})
+        return questions
 
-    def _artifact_is_fresh(
-        self,
-        artifact_id: str,
-        memo: dict[str, bool],
-        visiting: set[str],
-    ) -> bool:
-        if artifact_id in memo:
-            return memo[artifact_id]
-        record = self._artifact_record(artifact_id)
-        if not record:
-            memo[artifact_id] = False
-            return False
-        path = self.run_dir / record["path"]
-        if not path.is_file():
-            memo[artifact_id] = False
-            return False
-        if artifact_id == INPUT_ARTIFACT_ID:
-            memo[artifact_id] = True
-            return True
-        if artifact_id in visiting:
-            memo[artifact_id] = False
-            return False
-        visiting.add(artifact_id)
+    def _fresh(self, aid):
+        record = self._manifest["artifacts"].get(aid)
+        if not record or not self._path(record["path"]).is_file(): return False
+        if aid == "input": return True
+        if aid in {"review", "report"} and self._manifest["review_dirty"]: return False
         try:
-            envelope = read_json(path)
-        except (OSError, ValueError):
-            memo[artifact_id] = False
+            envelope = read_json(self._path(record["path"]))
+            if envelope["artifact_version"] != record["version"]: return False
+            for dep, version in envelope["inputs"].items():
+                if not self._fresh(dep) or self._manifest["artifacts"][dep]["version"] != version: return False
+            validate_refs(envelope["evidence_refs"], self._ledger())
+        except (ValueError, KeyError, OSError, PipelineError):
             return False
-        if (
-            envelope.get("artifact_id") != artifact_id
-            or envelope.get("artifact_version") != record.get("version")
-        ):
-            memo[artifact_id] = False
-            return False
-        inputs = envelope.get("inputs")
-        if not isinstance(inputs, list):
-            memo[artifact_id] = False
-            return False
-        for dependency in inputs:
-            if not isinstance(dependency, dict):
-                memo[artifact_id] = False
-                return False
-            dependency_id = dependency.get("artifact_id")
-            current = self._artifact_record(str(dependency_id))
-            if not current or dependency.get("artifact_version") != current.get("version"):
-                memo[artifact_id] = False
-                return False
-            if not self._artifact_is_fresh(str(dependency_id), memo, visiting.copy()):
-                memo[artifact_id] = False
-                return False
-        memo[artifact_id] = True
         return True
 
-    def _positioning_confirmed(self) -> bool:
-        checkpoint = self._manifest["checkpoints"]["positioning"]
-        record = self._artifact_record("m1-positioning")
-        return bool(
-            record
-            and self.artifact_is_fresh("m1-positioning")
-            and checkpoint.get("status") == "confirmed"
-            and checkpoint.get("artifact_version") == record.get("version")
-        )
+    def artifact_is_fresh(self, aid):
+        with self._transaction(): return self._fresh(aid)
 
-    def _post_m3_confirmed(self) -> bool:
-        checkpoint = self._manifest["checkpoints"]["post-m3"]
-        if checkpoint.get("status") == "not_required":
-            record = self._artifact_record("m3-synthesis")
-            return bool(record and checkpoint.get("artifact_version") == record.get("version"))
-        record = self._artifact_record("m3-synthesis")
-        return bool(
-            record
-            and self.artifact_is_fresh("m3-synthesis")
-            and checkpoint.get("status") == "confirmed"
-            and checkpoint.get("artifact_version") == record.get("version")
-        )
-
-    def confirm_positioning(self, note: str) -> None:
-        with self._transaction():
-            self._confirm_positioning_unlocked(note)
-
-    def _confirm_positioning_unlocked(self, note: str) -> None:
-        if not self.artifact_is_fresh("m1-positioning"):
-            raise MissingDependency("A fresh M1 positioning artifact is required before confirmation")
-        record = self._artifact_record("m1-positioning")
-        self._manifest["checkpoints"]["positioning"] = {
-            "status": "confirmed",
-            "artifact_version": record["version"],
-            "note": note.strip(),
-            "decided_at": utc_now(),
-        }
-        self._save_manifest()
-
-    def confirm_post_m3(self, note: str) -> None:
-        with self._transaction():
-            self._confirm_post_m3_unlocked(note)
-
-    def _confirm_post_m3_unlocked(self, note: str) -> None:
-        if not self.artifact_is_fresh("m3-synthesis"):
-            raise MissingDependency("A fresh M3 synthesis artifact is required before re-positioning confirmation")
-        checkpoint = self._manifest["checkpoints"]["post-m3"]
-        if checkpoint.get("status") != "pending":
-            raise CheckpointRequired("The M3 result does not currently require a re-positioning decision")
-        record = self._artifact_record("m3-synthesis")
-        self._manifest["checkpoints"]["post-m3"] = {
-            "status": "confirmed",
-            "artifact_version": record["version"],
-            "note": note.strip(),
-            "decided_at": utc_now(),
-        }
-        self._save_manifest()
-
-    def _ensure_checkpoint(self, spec: TaskSpec) -> None:
-        if spec.checkpoint == "positioning" and not self._positioning_confirmed():
-            raise CheckpointRequired("M2 is blocked until the researcher confirms the current M1 positioning")
-        if spec.checkpoint == "post-m3" and not self._post_m3_confirmed():
-            raise CheckpointRequired(
-                "M3 materially changed the positioning; M4 is blocked until the researcher confirms or corrects it"
-            )
-
-    def _dependency_inputs(self, spec: TaskSpec) -> list[dict[str, Any]]:
-        inputs: list[dict[str, Any]] = []
-        missing: list[str] = []
-        stale: list[str] = []
-        for artifact_id in spec.dependencies:
-            record = self._artifact_record(artifact_id)
-            if not record:
-                missing.append(artifact_id)
-                continue
-            if not self.artifact_is_fresh(artifact_id):
-                stale.append(artifact_id)
-                continue
-            path = (self.run_dir / record["path"]).resolve()
-            inputs.append(
-                {
-                    "artifact_id": artifact_id,
-                    "relative_path": record["path"],
-                    "path": str(path),
-                    "artifact_version": record["version"],
-                    "purpose": ARTIFACT_PURPOSES[artifact_id],
-                }
-            )
-        if missing:
-            raise MissingDependency(f"{spec.task_id} is missing dependencies: {', '.join(missing)}")
-        if stale:
-            raise StaleDependency(f"{spec.task_id} has stale dependencies: {', '.join(stale)}")
-        return inputs
-
-    def emit_task(self, task_id: str, *, refresh: bool = False) -> dict[str, Any]:
-        with self._transaction():
-            return self._emit_task_unlocked(task_id, refresh=refresh)
-
-    def _emit_task_unlocked(self, task_id: str, *, refresh: bool = False) -> dict[str, Any]:
-        if task_id not in TASKS:
-            raise PipelineError(f"Unknown task_id {task_id}")
-        spec = TASKS[task_id]
-        if self.artifact_is_fresh(spec.artifact_id) and not refresh:
-            raise TaskAlreadyComplete(f"{task_id} already has a fresh artifact; use refresh to rerun it")
-        inputs = self._dependency_inputs(spec)
-        self._ensure_checkpoint(spec)
-        instruction_path = (self.skill_root / spec.instruction_file).resolve()
-        packet = {
-            "packet_version": 1,
-            "run_id": self._manifest["run_id"],
-            "task_id": task_id,
-            "objective": spec.objective,
-            "isolation_contract": {
-                "mode": "fresh_worker_context",
-                "rule": "Use only this packet, every listed input artifact, the specified instruction section, and retrieved evidence. Do not rely on hidden conversation history.",
-            },
-            "instruction": {
-                "path": str(instruction_path),
-                "section": spec.instruction_section,
-            },
-            "artifact_contract": {
-                "path": str((self.skill_root / "references" / "artifact-contracts.md").resolve()),
-                "rule": "Read the common submission envelope and the payload contract for this task before writing the submission.",
-            },
-            "inputs": inputs,
-            "read_all_inputs": True,
-            "output_contract": {
-                "artifact_id": spec.artifact_id,
-                "required_payload_keys": list(spec.required_payload_keys),
-                "submission_path": str((self.run_dir / "submissions" / f"{task_id}.json").resolve()),
-            },
-            "validation_scope": [
-                "checkpoint_and_dependency_integrity",
-                "source_and_citation_integrity",
-                "provenance_and_no_invented_evidence",
-            ],
-            "submission_template": {
-                "task_id": task_id,
-                "summary": "REPLACE_WITH_A_2_TO_4_SENTENCE_SUPERVISOR_SUMMARY",
-                "attention_items": [],
-                "consumed_inputs": [
-                    {
-                        "artifact_id": item["artifact_id"],
-                        "artifact_version": item["artifact_version"],
-                        "used_for": "REPLACE_WITH_A_SHORT_DESCRIPTION_OF_HOW_THIS_INPUT_SHAPED_THE_RESULT",
-                    }
-                    for item in inputs
-                ],
-                "payload": {key: None for key in spec.required_payload_keys},
-            },
-        }
-        packet_path = self.run_dir / "tasks" / f"{task_id}.json"
-        atomic_write_json(packet_path, packet)
-        self._manifest["task_packets"][task_id] = {
-            "path": str(packet_path.relative_to(self.run_dir)).replace("\\", "/"),
-            "emitted_at": utc_now(),
-        }
-        self._save_manifest()
-        return packet
-
-    def _load_task_packet(self, task_id: str) -> dict[str, Any]:
-        packet_record = self._manifest.get("task_packets", {}).get(task_id)
-        if not isinstance(packet_record, dict):
-            raise SubmissionError(f"No task packet has been emitted for {task_id}")
-        packet_path = self.run_dir / packet_record["path"]
-        if not packet_path.is_file():
-            raise SubmissionError(f"The task packet for {task_id} is missing")
-        packet = read_json(packet_path)
-        if packet.get("task_id") != task_id or packet.get("run_id") != self._manifest["run_id"]:
-            raise SubmissionError(f"The task packet for {task_id} does not belong to this run")
-        return packet
-
-    def _artifact_payload(self, artifact_id: str) -> dict[str, Any]:
-        path = self._artifact_path(artifact_id)
-        envelope = read_json(path)
-        payload = envelope.get("payload")
-        if not isinstance(payload, dict):
-            raise SubmissionError(f"Artifact {artifact_id} has an invalid payload")
-        return payload
-
-    def source_ledger(self) -> dict[str, dict[str, Any]]:
-        groups: list[list[dict[str, Any]]] = []
-        for task_id in M3_DISCOVERY_TASKS:
-            artifact_id = TASKS[task_id].artifact_id
-            if not self.artifact_is_fresh(artifact_id):
-                continue
-            sources = self._artifact_payload(artifact_id).get("sources", [])
-            if isinstance(sources, list):
-                groups.append(sources)
-        return merge_source_ledgers(*groups)
-
-    def canonical_evidence_claims(self) -> dict[str, dict[str, Any]]:
-        if not self.artifact_is_fresh("m3-synthesis"):
-            return {}
-        return evidence_claim_ledger(self._artifact_payload("m3-synthesis").get("evidence_claims", []))
-
-    def _prepare_payload(self, task_id: str, raw_payload: Any) -> dict[str, Any]:
-        if not isinstance(raw_payload, dict):
-            raise SubmissionError("payload must be a JSON object")
-        payload = copy.deepcopy(raw_payload)
-        spec = TASKS[task_id]
-        require_keys(payload, spec.required_payload_keys, context=task_id)
-
-        if task_id in M3_DISCOVERY_TASKS:
-            payload["sources"] = normalize_and_verify_sources(payload["sources"], self.source_verifier)
-            local_ledger = merge_source_ledgers(payload["sources"])
-            validate_evidence_claims(payload["evidence_claims"], local_ledger, context=task_id)
-        elif task_id == "m3-synthesis":
-            ledger = self.source_ledger()
-            validate_evidence_claims(payload["evidence_claims"], ledger, context=task_id)
-            validate_source_ids(payload["closest_work"], ledger, context=f"{task_id} closest_work")
-            repositioning = payload["repositioning"]
-            if not isinstance(repositioning, dict) or not isinstance(repositioning.get("required"), bool):
-                raise SubmissionError("m3-synthesis repositioning must contain a required boolean")
-        elif task_id == "m4-reconstruction":
-            validate_provenance_sections(payload, spec.required_payload_keys, self.canonical_evidence_claims())
-        elif task_id in M5_TASKS:
-            validate_review_payload(payload, self.canonical_evidence_claims(), context=task_id)
-        elif task_id == "m6-challenge":
-            challenges = payload["selected_challenges"]
-            if not isinstance(challenges, list) or len(challenges) > 3:
-                raise SubmissionError("m6-challenge must select at most three challenges")
-            validate_optional_evidence_claim_ids(
-                challenges, self.canonical_evidence_claims(), context="selected_challenges"
-            )
-            validate_optional_evidence_claim_ids(
-                payload["updates"], self.canonical_evidence_claims(), context="updates"
-            )
-        elif task_id == "m7-synthesis":
-            if not isinstance(payload["report_markdown"], str) or not payload["report_markdown"].strip():
-                raise SubmissionError("m7-synthesis report_markdown must be non-empty")
-            validate_citation_claim_ids(
-                payload["citation_claim_ids"],
-                self.canonical_evidence_claims(),
-                context="m7-synthesis citations",
-            )
-        return payload
-
-    def ingest(
-        self,
-        task_id: str,
-        submission: dict[str, Any] | Path,
-        *,
-        replace: bool = False,
-    ) -> Path:
-        with self._transaction():
-            return self._ingest_unlocked(task_id, submission, replace=replace)
-
-    def _ingest_unlocked(
-        self,
-        task_id: str,
-        submission: dict[str, Any] | Path,
-        *,
-        replace: bool = False,
-    ) -> Path:
-        if task_id not in TASKS:
-            raise PipelineError(f"Unknown task_id {task_id}")
-        spec = TASKS[task_id]
-        current_record = self._artifact_record(spec.artifact_id)
-        if current_record and not replace:
-            raise TaskAlreadyComplete(f"{task_id} already has an artifact; use replace to ingest a new version")
-        expected_inputs = self._dependency_inputs(spec)
-        self._ensure_checkpoint(spec)
-        packet = self._load_task_packet(task_id)
-        packet_inputs = packet.get("inputs")
-        expected_signature = [
-            (item["artifact_id"], item["artifact_version"]) for item in expected_inputs
-        ]
-        packet_signature = [
-            (item.get("artifact_id"), item.get("artifact_version"))
-            for item in packet_inputs
-            if isinstance(item, dict)
-        ] if isinstance(packet_inputs, list) else []
-        if packet_signature != expected_signature:
-            raise SubmissionError(f"The emitted task packet for {task_id} no longer matches current dependencies")
-
-        submission_value = read_json(Path(submission)) if isinstance(submission, Path) else copy.deepcopy(submission)
-        if not isinstance(submission_value, dict) or submission_value.get("task_id") != task_id:
-            raise SubmissionError(f"Submission task_id must equal {task_id}")
-        summary = submission_value.get("summary")
-        if not isinstance(summary, str) or not summary.strip() or summary.startswith("REPLACE_WITH_"):
-            raise SubmissionError("Submission must contain a concise supervisor summary")
-        attention_items = submission_value.get("attention_items", [])
-        if not isinstance(attention_items, list) or any(not isinstance(item, str) for item in attention_items):
-            raise SubmissionError("attention_items must be a list of strings")
-        consumed_inputs = validate_consumed_inputs(submission_value.get("consumed_inputs"), expected_inputs)
-        payload = self._prepare_payload(task_id, submission_value.get("payload"))
-
-        artifact_version = int(current_record.get("version", 0)) + 1 if current_record else 1
-        artifact_path = self.run_dir / spec.artifact_path
-        envelope = {
-            "schema_version": 1,
-            "run_id": self._manifest["run_id"],
-            "artifact_id": spec.artifact_id,
-            "artifact_version": artifact_version,
-            "task_id": task_id,
-            "created_at": utc_now(),
-            "summary": summary.strip(),
-            "attention_items": attention_items,
-            "inputs": consumed_inputs,
-            "payload": payload,
-        }
-        atomic_write_json(artifact_path, envelope)
-        artifact_record = {
-            "artifact_id": spec.artifact_id,
-            "path": str(artifact_path.relative_to(self.run_dir)).replace("\\", "/"),
-            "version": artifact_version,
-            "produced_by": task_id,
-            "created_at": envelope["created_at"],
-            "summary": envelope["summary"],
-            "attention_items": envelope["attention_items"],
-        }
-        self._manifest["artifacts"][spec.artifact_id] = artifact_record
-
-        if task_id == "m1-positioning":
-            self._manifest["checkpoints"]["positioning"] = {
-                "status": "pending",
-                "artifact_version": artifact_record["version"],
-                "note": "",
-                "decided_at": None,
-            }
-        elif task_id == "m3-synthesis":
-            needs_confirmation = payload["repositioning"]["required"]
-            self._manifest["checkpoints"]["post-m3"] = {
-                "status": "pending" if needs_confirmation else "not_required",
-                "artifact_version": artifact_record["version"],
-                "note": "",
-                "decided_at": None,
-            }
-        elif task_id == "m7-synthesis":
-            report_path = self.run_dir / "07-final-report.md"
-            atomic_write_text(report_path, payload["report_markdown"].rstrip() + "\n")
-            self._manifest.setdefault("exports", {})["final_report"] = {
-                "path": "07-final-report.md",
-                "source_artifact_version": artifact_record["version"],
-                "created_at": utc_now(),
-            }
-
-        self._save_manifest()
-        return artifact_path
-
-    def compute_state(self) -> str:
-        if not self.artifact_is_fresh("m1-positioning"):
-            return "POSITIONING"
-        if not self._positioning_confirmed():
-            return "WAITING_FOR_POSITIONING_CONFIRMATION"
-        if not self.artifact_is_fresh("m2-route"):
-            return "ROUTING"
-        if any(not self.artifact_is_fresh(TASKS[task].artifact_id) for task in M3_DISCOVERY_TASKS):
-            return "DOMAIN_PRIOR_RESEARCH"
-        if not self.artifact_is_fresh("m3-synthesis"):
-            return "DOMAIN_PRIOR_SYNTHESIS"
-        if not self._post_m3_confirmed():
-            return "WAITING_FOR_REPOSITIONING_CONFIRMATION"
-        if not self.artifact_is_fresh("m4-reconstruction"):
-            return "IDEA_RECONSTRUCTION"
-        if not self.artifact_is_fresh("m5-a") or not self.artifact_is_fresh("m5-b"):
-            return "REVIEW_AB"
-        if not self.artifact_is_fresh("m5-c"):
-            return "REVIEW_C"
-        if not self.artifact_is_fresh("m5-d"):
-            return "REVIEW_D"
-        if not self.artifact_is_fresh("m6-challenge"):
-            return "CHALLENGE"
-        if not self.artifact_is_fresh("m7-synthesis"):
-            return "SYNTHESIS"
+    def compute_state(self):
+        if self._manifest["schema_version"] == 1: return self._manifest["state"]
+        if not self._fresh("plan"): return "PLANNING"
+        if self._manifest["recheck"]["pending"]: return "RECHECKING"
+        if not self._fresh("review"): return "REVIEWING"
+        if not self._fresh("report"): return "REPORTING"
         return "FINALIZED"
 
-    def _task_ready(self, task_id: str) -> bool:
-        spec = TASKS[task_id]
-        if self.artifact_is_fresh(spec.artifact_id):
-            return False
-        try:
-            self._dependency_inputs(spec)
-            self._ensure_checkpoint(spec)
-        except PipelineError:
-            return False
-        return True
+    def _expired(self):
+        b = self._manifest["budget"]
+        return bool(b["review_started_at"] and
+                    (datetime.now(timezone.utc) - datetime.fromisoformat(b["review_started_at"])).total_seconds()
+                    >= b["review_deadline_minutes"] * 60)
 
-    def status(self) -> dict[str, Any]:
+    def status(self):
         with self._transaction():
-            return self._status_unlocked()
+            if self._manifest["schema_version"] == 1:
+                return {"run_id": self._manifest["run_id"], "state": self.compute_state(),
+                        "legacy_read_only": True, "ready_tasks": [], "exports": self._manifest.get("exports", {})}
+            state = self.compute_state()
+            ready = {"PLANNING": ["s1-plan"], "REVIEWING": ["s2-review"], "RECHECKING": ["s2-review"],
+                     "REPORTING": ["s3-report"], "FINALIZED": []}[state]
+            return {"run_id": self._manifest["run_id"], "state": state, "ready_tasks": ready,
+                    "budget": self._manifest["budget"], "research_allowed": not self._expired(),
+                    "recheck": self._manifest["recheck"], "exports": self._manifest["exports"],
+                    "evidence_revision": self._manifest["evidence_revision"],
+                    "size_warnings": [p["size_warning"] for p in self._manifest["task_packets"].values() if p.get("size_warning")]}
 
-    def _status_unlocked(self) -> dict[str, Any]:
-        artifacts: dict[str, dict[str, Any]] = {}
-        for artifact_id, record in self._manifest.get("artifacts", {}).items():
-            artifacts[artifact_id] = {
-                "path": record["path"],
-                "fresh": self.artifact_is_fresh(artifact_id),
-                "summary": record.get("summary"),
-                "attention_items": record.get("attention_items", []),
-            }
-        return {
-            "run_id": self._manifest["run_id"],
-            "state": self.compute_state(),
-            "ready_tasks": [task_id for task_id in TASK_ORDER if self._task_ready(task_id)],
-            "artifacts": artifacts,
-            "checkpoints": copy.deepcopy(self._manifest["checkpoints"]),
-            "exports": copy.deepcopy(self._manifest.get("exports", {})),
-        }
-
-    def validate_run(self) -> dict[str, Any]:
+    def emit_task(self, task_id, *, refresh=False):
         with self._transaction():
-            return self._validate_run_unlocked()
+            self._writable()
+            if task_id not in TASKS: raise PipelineError("Unknown task")
+            spec = TASKS[task_id]
+            if self._fresh(spec.artifact_id) and not refresh: raise TaskAlreadyComplete(task_id)
+            if task_id == "s3-report" and self._manifest["recheck"]["pending"]: raise MissingDependency("Complete pending recheck first")
+            inputs = {}
+            for dep in spec.dependencies:
+                if not self._fresh(dep): raise MissingDependency(f"Missing/stale {dep}")
+                r = self._manifest["artifacts"][dep]
+                inputs[dep] = {"version": r["version"], "path": str(self._path(r["path"]))}
+            pid = uuid.uuid4().hex
+            packet = {"packet_id": pid, "run_id": self._manifest["run_id"], "task_id": task_id,
+                      "objective": spec.objective, "inputs": inputs,
+                      "instruction": str(self.skill_root / "references" / spec.instruction_file),
+                      "contract": str(self.skill_root / "references/artifact-contracts.md"),
+                      "submission_path": str(self.run_dir / "submissions" / (pid + ".json")),
+                      "isolation_mode": "fresh_stage_context", "evidence_revision": self._manifest["evidence_revision"]}
+            if task_id == "s2-review":
+                if not self._manifest["budget"]["review_started_at"]:
+                    self._manifest["budget"]["review_started_at"] = utc_now()
+                packet["research_allowed"] = not self._expired()
+                packet["budget"] = copy.deepcopy(self._manifest["budget"])
+                packet["evidence_snapshot"] = str(self._path(self._manifest["evidence_snapshot"])) if self._manifest["evidence_snapshot"] else None
+                packet["recheck_request"] = self._manifest["recheck"]["pending"]
+                if "review" in self._manifest["artifacts"]:
+                    packet["previous_review"] = str(self._path(self._manifest["artifacts"]["review"]["path"]))
+                packet["recovery_path"] = str(self.run_dir / "recovery-review.json")
+            if task_id == "s3-report":
+                view = evidence_view(self._payload("review"), self._ledger())
+                relative = f"views/{pid}-evidence.json"
+                atomic_write_json(self._path(relative), view)
+                packet["evidence_view"] = str(self._path(relative))
+                packet["rechecks_remaining"] = max(0, self._manifest["budget"]["max_rechecks"] - self._manifest["recheck"]["count"])
+            packet["input_chars"] = sum(len(Path(v["path"]).read_text(encoding="utf-8-sig")) for v in inputs.values())
+            if "evidence_view" in packet: packet["input_chars"] += len(Path(packet["evidence_view"]).read_text(encoding="utf-8-sig"))
+            atomic_write_json(self.run_dir / "tasks" / (pid + ".json"), packet)
+            self._manifest["task_packets"][pid] = {"path": f"tasks/{pid}.json", "task_id": task_id, "consumed": False,
+                                                     "input_chars": packet["input_chars"], "created_at": utc_now()}
+            self._save()
+            return packet
 
-    def _validate_run_unlocked(self) -> dict[str, Any]:
-        errors: list[str] = []
-        warnings: list[str] = []
-        for artifact_id in self._manifest.get("artifacts", {}):
-            if not self.artifact_is_fresh(artifact_id):
-                errors.append(f"Artifact {artifact_id} is stale, missing, or has invalid identity metadata")
-        ledger = self.source_ledger()
-        for source_id, source in ledger.items():
-            if source.get("verification", {}).get("status") != "verified":
-                warnings.append(f"Source {source_id} is registered but cannot support evidence-dependent claims")
-        if self.artifact_is_fresh("m1-positioning") and not self._positioning_confirmed():
-            warnings.append("The pipeline is correctly stopped at the positioning checkpoint")
-        if self.artifact_is_fresh("m7-synthesis"):
-            export = self._manifest.get("exports", {}).get("final_report")
-            m7_record = self._artifact_record("m7-synthesis")
-            if not isinstance(export, dict):
-                errors.append("The final report export is missing")
+    def add_evidence(self, batch):
+        if isinstance(batch, (Path, str)): batch = read_json(Path(batch))
+        with self._transaction():
+            self._writable()
+            if not self._fresh("plan"): raise MissingDependency("Plan required")
+            baseline = self._ledger()
+            # Idempotent retry remains allowed after the budget expired.
+            if batch.get("batch_id") not in baseline["batches"]:
+                if not self._manifest["budget"]["review_started_at"]:
+                    raise MissingDependency("Emit s2-review before researching")
+                if self._expired():
+                    raise PipelineError("Research deadline reached; submit a qualified review")
+            revision = self._manifest["evidence_revision"]
+            plan_version = self._manifest["artifacts"]["plan"]["version"]
+            questions = self._questions()
+        ledger, result, replay = prepare_batch(baseline, batch, self.source_verifier, questions)
+        if replay: return result
+        with self._transaction():
+            self._writable()
+            if revision != self._manifest["evidence_revision"] or plan_version != self._manifest["artifacts"]["plan"]["version"]:
+                raise StaleDependency("Evidence changed during verification; retry batch")
+            revision += 1
+            path = f"evidence/ledger-{uuid.uuid4().hex}.json"
+            atomic_write_json(self._path(path), ledger)
+            self._manifest["evidence_snapshot"] = path
+            self._manifest["evidence_revision"] = revision
+            if "review" in self._manifest["artifacts"]:
+                review = self._payload("review")
+                reviewed_qids = {q["id"] for q in review["questions"]}
+                if batch["question_id"] in reviewed_qids or set(result["changed_claim_ids"]) & refs_in(review).keys():
+                    self._manifest["review_dirty"] = True
+                    self._manifest["exports"] = {}
+            self._save()
+            return result
+
+    def ingest(self, task_id, submission, *, replace=False):
+        value = read_json(Path(submission)) if isinstance(submission, (Path, str)) else copy.deepcopy(submission)
+        require_keys(value, ("task_id", "packet_id"))
+        with self._transaction():
+            self._writable()
+            if task_id not in TASKS or value["task_id"] != task_id: raise SubmissionError("Task ID mismatch")
+            pid = value["packet_id"]
+            record = self._manifest["task_packets"].get(pid)
+            if not record or record["task_id"] != task_id: raise SubmissionError("Unknown packet")
+            if record["consumed"]:
+                if record.get("submission_digest") == digest(value): return copy.deepcopy(record["result"])
+                raise SubmissionError("Packet already consumed")
+            packet = read_json(self._path(record["path"]))
+            for aid, ref in packet["inputs"].items():
+                if not self._fresh(aid) or self._manifest["artifacts"][aid]["version"] != ref["version"]:
+                    raise StaleDependency("Packet inputs changed")
+            if task_id == "s3-report" and self._manifest["recheck"]["pending"]:
+                raise StaleDependency("Complete pending recheck first")
+            if task_id == "s2-review":
+                # Evidence additions are expected during a stage; the submitted review must close over current questions.
+                if self._manifest["artifacts"]["plan"]["version"] != packet["inputs"]["plan"]["version"]:
+                    raise StaleDependency("Plan changed")
+            if "recheck_request" in value:
+                if task_id != "s3-report" or "payload" in value: raise SubmissionError("Recheck and final payload are exclusive")
+                req = value["recheck_request"]
+                require_keys(req, ("question_id", "reason", "affected_judgment_ids", "needed_evidence"))
+                review = self._payload("review")
+                if req["question_id"] not in {q["id"] for q in review["questions"]}: raise SubmissionError("Unknown recheck question")
+                strings(req["affected_judgment_ids"], "affected judgments")
+                if not req["affected_judgment_ids"] or not set(req["affected_judgment_ids"]) <= {j["id"] for j in review["judgments"]}:
+                    raise SubmissionError("Unknown affected judgment")
+                nonempty(req["reason"], "recheck reason"); nonempty(req["needed_evidence"], "needed evidence")
+                if self._manifest["recheck"]["count"] >= self._manifest["budget"]["max_rechecks"] or self._expired():
+                    return {"limit_reached": True, "instruction": "Complete report with explicit limitations"}
+                self._manifest["recheck"]["count"] += 1
+                self._manifest["recheck"]["pending"] = req
+                self._manifest["review_dirty"] = True
+                self._manifest["exports"] = {}
+                atomic_write_json(self.run_dir / "rechecks" / (pid + ".json"), req)
+                result = {"recheck_requested": True}
             else:
-                export_path = self.run_dir / export.get("path", "")
-                if not export_path.is_file():
-                    errors.append("The final report export is missing")
-                if export.get("source_artifact_version") != m7_record.get("version"):
-                    errors.append("The final report export was not generated from the current M7 artifact")
-        return {
-            "valid": not errors,
-            "state": self.compute_state(),
-            "errors": errors,
-            "warnings": warnings,
-            "verified_source_count": sum(
-                1 for source in ledger.values() if source.get("verification", {}).get("status") == "verified"
-            ),
-            "registered_source_count": len(ledger),
-        }
+                require_keys(value, ("payload",))
+                p = value["payload"]; ledger = self._ledger()
+                line_count = len((self.run_dir / "input.md").read_text(encoding="utf-8").splitlines())
+                if task_id == "s1-plan": validate_plan(p, line_count)
+                elif task_id == "s2-review": validate_review(p, ledger, self._questions(), line_count)
+                else: validate_report(p, ledger, self._payload("review"), line_count)
+                aid = TASKS[task_id].artifact_id
+                if self._fresh(aid) and not replace: raise TaskAlreadyComplete("Use replace for an existing fresh artifact")
+                old = self._manifest["artifacts"].get(aid)
+                version = old["version"] + 1 if old else 1
+                relative = f"artifacts/{aid}-v{version}-{pid}.json"
+                envelope = {"artifact_id": aid, "artifact_version": version,
+                            "inputs": {k: v["version"] for k, v in packet["inputs"].items()},
+                            "evidence_refs": refs_in(p), "payload": p}
+                atomic_write_json(self._path(relative), envelope)
+                self._manifest["artifacts"][aid] = {"path": relative, "version": version}
+                if task_id == "s1-plan":
+                    self._manifest["review_dirty"] = True
+                    self._manifest["recheck"]["pending"] = None
+                    self._manifest["exports"] = {}
+                elif task_id == "s2-review":
+                    self._manifest["review_dirty"] = False
+                    self._manifest["recheck"]["pending"] = None
+                    self._manifest["exports"] = {}
+                else:
+                    report_text = render_report(p, ledger)
+                    # Versioned export is authoritative; convenience copy is not used for state.
+                    export = f"artifacts/final-report-v{version}-{pid}.md"
+                    atomic_write_text(self._path(export), report_text)
+                    atomic_write_text(self.run_dir / "final-report.md", report_text)
+                    self._manifest["exports"] = {"final_report": {"path": export, "version": version}}
+                result = {"artifact": str(self._path(relative)), "version": version}
+                record["output_chars"] = len(json.dumps(p, ensure_ascii=False))
+                limit = {"s1-plan": 4000, "s2-review": 16000, "s3-report": 24000}[task_id]
+                if record["output_chars"] > limit:
+                    record["size_warning"] = f"{task_id}: {record['output_chars']} characters exceeds soft limit {limit}; avoid repeated analysis"
+                record["token_usage"] = None
+            record.update(consumed=True, submission_digest=digest(value), result=result, completed_at=utc_now())
+            self._save()
+            return copy.deepcopy(result)
 
-
-__all__ = [
-    "CheckpointRequired",
-    "EvidenceIntegrityError",
-    "MissingDependency",
-    "PipelineError",
-    "ProvenanceIntegrityError",
-    "ReviewPipeline",
-    "StaleDependency",
-    "SubmissionError",
-    "TaskAlreadyComplete",
-]
+    def validate_run(self):
+        with self._transaction():
+            if self._manifest["schema_version"] == 1:
+                return {"valid": True, "legacy_read_only": True, "state": self.compute_state(),
+                        "warnings": ["Legacy structure not validated by v2"], "errors": []}
+            errors, warnings = [], []
+            for aid in self._manifest["artifacts"]:
+                if not self._fresh(aid): warnings.append(f"{aid} is stale; regenerate affected stage")
+            try:
+                lines = len((self.run_dir / "input.md").read_text(encoding="utf-8").splitlines())
+                ledger = self._ledger()
+                if self._fresh("plan"): validate_plan(self._payload("plan"), lines)
+                if self._fresh("review"):
+                    reviewed = self._payload("review")
+                    qids = {q["id"] for q in reviewed["questions"]}
+                    relevant = {k: v for k, v in self._questions().items() if k in qids}
+                    validate_review(reviewed, ledger, relevant, lines)
+                if self._fresh("report"):
+                    p = self._payload("report")
+                    validate_report(p, ledger, self._payload("review"), lines)
+                    export = self._manifest["exports"].get("final_report")
+                    if not export or not self._path(export["path"]).is_file(): raise SubmissionError("Missing report export")
+                    if self._path(export["path"]).read_text(encoding="utf-8") != render_report(p, ledger):
+                        raise SubmissionError("Report export does not match validated payload")
+            except (PipelineError, KeyError, OSError, ValueError) as error: errors.append(str(error))
+            return {"valid": not errors, "state": self.compute_state(), "errors": errors, "warnings": warnings}

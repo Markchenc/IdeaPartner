@@ -1,168 +1,58 @@
-from __future__ import annotations
-
-import sys
 from pathlib import Path
-from typing import Any
-
-
-SCRIPTS = (
-    Path(__file__).resolve().parents[1]
-    / "skills"
-    / "ideapartner"
-    / "scripts"
-)
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
-
+import sys
+SCRIPTS = Path(__file__).resolve().parents[1] / "skills/ideapartner/scripts"
+sys.path.insert(0, str(SCRIPTS))
+from idea_review_runtime.validation import DIMENSIONS, SECTIONS
 
 class FakeSourceVerifier:
-    def verify(self, source: dict[str, Any]) -> dict[str, Any]:
-        verified = not source["source_id"].startswith("unverified-")
-        return {
-            "status": "verified" if verified else "unverified",
-            "method": "fake-resolver",
-            "checked_at": "2026-09-02T00:00:00+00:00",
-            "resolved_url": source.get("url"),
-            "detail": "test fixture",
-        }
+    def __init__(self): self.calls = 0
+    def verify(self, source):
+        self.calls += 1
+        return {"status": "unverified" if source["source_id"].startswith("unverified") else "verified",
+                "method": "fake", "resolved_url": source.get("url")}
 
+def question(qid="q1"):
+    return {"id": qid, "question": "Has the contribution been covered?", "decision_impact": "Changes novelty decision"}
 
-def submission(packet: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "task_id": packet["task_id"],
-        "summary": f"Completed {packet['task_id']} for the test run.",
-        "attention_items": [],
-        "consumed_inputs": [
-            {
-                "artifact_id": item["artifact_id"],
-                "artifact_version": item["artifact_version"],
-                "used_for": f"Used to execute {packet['task_id']}",
-            }
-            for item in packet["inputs"]
-        ],
-        "payload": payload,
-    }
+def plan():
+    return {"idea_claims": [{"id": "i1", "text": "Study compositional generalization", "input_locator": {"start": 1, "end": 1}}],
+            "boundaries": [], "maturity": "early", "contribution_type": "method", "constraints": [],
+            "working_assumptions": [], "review_questions": [question()]}
 
+def source(sid="s1"):
+    return {"source_id": sid, "source_type": "paper", "title": "A Study of Generalization",
+            "authors": ["A"], "year": 2025, "url": "https://example.org/paper",
+            "identifiers": {"doi": "10.1234/example"}}
 
-def positioning_payload() -> dict[str, Any]:
-    return {
-        "domains": {"primary": "NLP", "related": ["HCI"], "adjacent": []},
-        "scenario": {"track": "human-AI dialogue", "constraints": ["privacy"]},
-        "research_object": {"core": "dialogue explanations", "scope": "multi-turn"},
-        "core_difficulty": {"problem": "explanations are not faithful"},
-        "contribution": {"primary_type": "new problem/framing", "claim": "situated faithfulness"},
-        "maturity": {"level": "early", "rationale": "method is incomplete"},
-        "control": {"confidence": "medium", "ambiguities": []},
-    }
+def batch(bid="b1", sid="s1", cid="e1", qid="q1"):
+    return {"batch_id": bid, "question_id": qid, "decision_impact": "Assess overlap",
+            "sources": [source(sid)], "claims": [{"claim_id": cid, "claim": "The paper covers this method",
+            "question_ids": [qid], "source_refs": [{"source_id": sid, "version": 1}],
+            "relation": "support", "locator": "Section 3", "inspection": "full_text", "limits": "Only this setting"}],
+            "outcome": "Inspect the remaining contribution"}
 
+def review(evidence=False, version=1):
+    refs = [{"claim_id": "e1", "version": version}] if evidence else []
+    return {"questions": [{**question(), "outcome": "Covered search remains incomplete", "evidence_refs": refs}],
+            "judgments": [{"id": "j"+str(i), "dimension": d, "statement": "Provisional judgment",
+            "applicability": "provisional", "basis": "literature" if evidence else "inference",
+            "evidence_refs": refs, "rationale": "Available evidence is limited",
+            "strongest_counterargument": "An adjacent contribution might differ", "uncertainty": "Coverage",
+            "next_action": "Inspect a discriminating case"} for i,d in enumerate(DIMENSIONS)],
+            "closest_work": [], "decision": {"status": "insufficient_evidence", "rationale": "Search incomplete",
+            "scope": "Current contribution", "decisive_judgment_ids": ["j1"]},
+            "stop": {"reason": "retrieval_unavailable", "unresolved_question_ids": ["q1"], "coverage_limits": ["Limited access"]}}
 
-def route_payload() -> dict[str, Any]:
-    return {
-        "maturity": "early",
-        "alignment_questions": ["Does the object match the scenario?"],
-        "m3_scope": {"branches": ["faithfulness"], "evidence_norms_to_find": ["human validity"]},
-        "m4_assessability": {"method_construction": "not_yet_assessable"},
-        "review_lens_seed": {"primary_contribution": "new problem/framing"},
-    }
+def report(evidence=False, version=1):
+    def block(text="Current judgment", jid="j1"):
+        return {"text": text, "judgment_ids": [jid],
+                "evidence_refs": [{"claim_id": "e1", "version": version}] if evidence else []}
+    return {"language": "zh", "structured_idea": {s: [{"text": "Not specified by researcher", "provenance": "missing",
+            "input_locators": [], "evidence_refs": []}] for s in SECTIONS},
+            "assessment": [{"dimension": d, "blocks": [block(jid="j"+str(i))]} for i,d in enumerate(DIMENSIONS)],
+            "recommendations": [block("Run a minimal test")], "decision": block("Evidence is insufficient"),
+            "limitations": [block("Retrieval incomplete")]}
 
-
-def source(source_id: str = "paper-1") -> dict[str, Any]:
-    return {
-        "source_id": source_id,
-        "source_type": "paper",
-        "title": "A Real Research Paper",
-        "authors": ["Researcher"],
-        "year": 2025,
-        "url": "https://example.org/paper",
-        "identifiers": {"doi": "10.0000/example"},
-    }
-
-
-def prior_phase_payload(
-    *, sources: list[dict[str, Any]] | None = None, claims: list[dict[str, Any]] | None = None
-) -> dict[str, Any]:
-    return {
-        "scope": {"included": ["faithfulness"]},
-        "queries": [{"query": "dialogue explanation faithfulness", "purpose": "closest work"}],
-        "sources": sources or [],
-        "evidence_claims": claims or [],
-        "coverage": {"covered": ["seed branch"], "gaps": []},
-    }
-
-
-def prior_synthesis_payload(source_ids: list[str] | None = None) -> dict[str, Any]:
-    ids = source_ids or []
-    claims = []
-    if ids:
-        claims.append(
-            {
-                "claim_id": "claim-1",
-                "claim": "Faithfulness remains contested.",
-                "source_ids": ids,
-                "relation": "support",
-                "locator": "abstract",
-            }
-        )
-    return {
-        "evolution_tree": {"root": "explanation faithfulness", "branches": []},
-        "field_map": {"foundation": [], "data": [], "frontier": []},
-        "idea_attachment": {"relation": "redirects", "nodes": []},
-        "closest_work": ids,
-        "evidence_claims": claims,
-        "coverage": {"sufficient_for": ["problem positioning"], "gaps": []},
-        "repositioning": {"required": False, "reason": ""},
-    }
-
-
-def reconstruction_payload(evidence_claim_id: str | None = None) -> dict[str, Any]:
-    supported = (
-        {
-            "text": "Prior work leaves a measurement gap.",
-            "provenance": "evidence_supported",
-            "evidence_claim_ids": [evidence_claim_id],
-        }
-        if evidence_claim_id
-        else {
-            "text": "The researcher reports a faithfulness gap.",
-            "provenance": "researcher_stated",
-            "evidence_claim_ids": [],
-        }
-    )
-    missing = {
-        "text": "Method details are not specified.",
-        "provenance": "missing",
-        "evidence_claim_ids": [],
-    }
-    return {
-        "problem_definition": [supported],
-        "limitations_and_core_difficulty": [supported],
-        "contribution_design": [supported],
-        "method_construction": [missing],
-        "experimental_setting": [missing],
-        "expected_difficulties": [supported],
-    }
-
-
-def review_payload(*, blocker: bool = False, direct_evidence_claim_ids: list[str] | None = None) -> dict[str, Any]:
-    return {
-        "review_lens": {
-            "maturity": "early",
-            "primary_contribution": "new problem/framing",
-            "field_norms": ["construct validity"],
-        },
-        "judgments": [
-            {
-                "claim": "The problem is provisionally legitimate.",
-                "status": "provisional",
-                "provenance": "inferred",
-                "evidence_claim_ids": [],
-            }
-        ],
-        "conclusion": "provisional",
-        "blocker": {
-            "active": blocker,
-            "scope": "current formulation" if blocker else "none",
-            "reason": "Closest work subsumes the claim." if blocker else "",
-            "direct_evidence_claim_ids": direct_evidence_claim_ids or [],
-        },
-    }
+def submit(pipeline, task, payload, **kwargs):
+    packet = pipeline.emit_task(task, refresh=kwargs.get("replace", False))
+    return pipeline.ingest(task, {"task_id": task, "packet_id": packet["packet_id"], "payload": payload}, **kwargs)
